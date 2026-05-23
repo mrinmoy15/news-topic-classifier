@@ -240,3 +240,7 @@ pipelines/compiled/
 # MLflow
 mlruns/
 mlartifacts/
+
+
+# INTERNAL SETUP SCRIPTS
+setup_structure.ps1
