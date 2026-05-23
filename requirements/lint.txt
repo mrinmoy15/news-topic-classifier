@@ -1,0 +1,8 @@
+# requirements/lint.txt
+# Linting + formatting + type checking
+# Install: uv pip install -r requirements/lint.txt
+# (no base.txt needed — lint tools are standalone)
+# =============================================================================
+
+ruff>=0.4.0
+mypy>=1.10.0

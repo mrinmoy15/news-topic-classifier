@@ -49,7 +49,44 @@ New-File "pyproject.toml"
 New-File "setup.cfg"
 New-File ".gitignore"
 New-File ".env.example"
-New-File "requirements.txt"
+
+# =============================================================================
+# HYDRA CONFIGURATION
+# =============================================================================
+
+Write-Host "[ 2/11] Creating conf/..." -ForegroundColor Yellow
+
+New-Dir "conf"
+New-File "conf/config.yaml"
+
+New-Dir "conf/environment"
+New-File "conf/environment/local.yaml"
+New-File "conf/environment/dev.yaml"
+New-File "conf/environment/pp.yaml"
+New-File "conf/environment/prd.yaml"
+
+New-Dir "conf/model"
+New-File "conf/model/default.yaml"
+
+New-Dir "conf/training"
+New-File "conf/training/default.yaml"
+
+New-Dir "conf/data"
+New-File "conf/data/default.yaml"
+
+# =============================================================================
+# REQUIREMENTS  (split by environment)
+# =============================================================================
+ 
+Write-Host "[ 2/10] Creating requirements/..." -ForegroundColor Yellow
+ 
+New-Dir "requirements"
+New-File "requirements/base.txt"        # core ML + GCP — installed everywhere
+New-File "requirements/dev.txt"         # jupyter, matplotlib — local only
+New-File "requirements/api.txt"         # fastapi, uvicorn — Cloud Run API
+New-File "requirements/dashboard.txt"   # streamlit, plotly — Cloud Run dashboard
+New-File "requirements/test.txt"        # pytest, pytest-cov — CI only
+New-File "requirements/lint.txt"        # ruff, mypy — standalone
 
 # =============================================================================
 # DATA  (local only — gitignored except .gitkeep)

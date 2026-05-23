@@ -1,0 +1,103 @@
+# =============================================================================
+# pyproject.toml
+# News Topic Classifier — CCDS v2 + GCP
+# Metadata + tool configuration only
+# Dependencies managed via requirements/ files + uv
+# =============================================================================
+
+[build-system]
+requires      = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# -----------------------------------------------------------------------------
+# PROJECT METADATA
+# -----------------------------------------------------------------------------
+
+[project]
+name            = "news-topic-classifier"
+version         = "0.1.0"
+description     = "BERT fine-tuned model to classify BBC news topics (business, entertainment, politics, sport, tech)"
+readme          = "README.md"
+requires-python = ">=3.10"
+license         = { text = "MIT" }
+
+authors = [
+  { name = "Mrinmoy", email = "mrinmoybhuyuan007@gmail.com"},
+]
+
+keywords = [
+  "nlp", "bert", "classification", "vertex-ai", "gcp", "huggingface",
+]
+
+# -----------------------------------------------------------------------------
+# TOOL — SETUPTOOLS
+# -----------------------------------------------------------------------------
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["news_topic_classifier*", "pipelines*", "api*", "dashboard*"]
+
+# -----------------------------------------------------------------------------
+# TOOL — RUFF  (linting + formatting)
+# -----------------------------------------------------------------------------
+
+[tool.ruff]
+target-version = "py310"
+line-length    = 88
+src            = ["news_topic_classifier", "pipelines", "api", "dashboard", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "UP",  # pyupgrade
+]
+ignore = [
+  "E501",  # line too long — ruff format handles this
+  "B008",  # do not perform function calls in default arguments
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["news_topic_classifier"]
+
+[tool.ruff.format]
+quote-style  = "double"
+indent-style = "space"
+
+# -----------------------------------------------------------------------------
+# TOOL — MYPY  (type checking)
+# -----------------------------------------------------------------------------
+
+[tool.mypy]
+python_version         = "3.10"
+warn_return_any        = true
+warn_unused_configs    = true
+ignore_missing_imports = true
+
+# -----------------------------------------------------------------------------
+# TOOL — PYTEST
+# -----------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths        = ["tests"]
+python_files     = ["test_*.py"]
+python_classes   = ["Test*"]
+python_functions = ["test_*"]
+addopts          = "-v --cov=news_topic_classifier --cov-report=term-missing"
+
+# -----------------------------------------------------------------------------
+# TOOL — COVERAGE
+# -----------------------------------------------------------------------------
+
+[tool.coverage.run]
+source = ["news_topic_classifier"]
+omit   = ["tests/*", "notebooks/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under   = 80
