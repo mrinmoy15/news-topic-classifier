@@ -38,6 +38,8 @@ google-cloud-bigquery>=3.20.0
 google-cloud-storage>=2.16.0
 google-cloud-aiplatform>=1.50.0
 kfp>=2.7.0
+google-cloud-bigquery-storage>=2.24.0
+db-dtypes>=1.2.0
 
 # -----------------------------------------------------------------------------
 # CONFIG & UTILITIES

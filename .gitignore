@@ -243,4 +243,8 @@ mlartifacts/
 
 
 # INTERNAL SETUP SCRIPTS
-setup_structure.ps1
+initial_setup_structure.ps1
+
+# model artifacts
+models/*
+!models/.gitkeep 
