@@ -1,0 +1,34 @@
+# =============================================================================
+# conf/environment/dev.yaml
+# Development environment settings
+# Data source: BigQuery via GCS
+# =============================================================================
+ 
+# @package _global_
+ 
+environment:
+  name: dev
+  data_source: bigquery
+ 
+  # GCP
+  gcp_project: cs-cdwp-data-dev2188
+  gcp_region: us-central1
+ 
+  # BigQuery
+  bq_dataset: DATA_SCNCE_DEV_DATA
+  bq_source_table: bigquery-public-data.bbc_news.fulltext
+  bq_results_table: news_topic_classifier_results
+ 
+  # Cloud Storage
+  gcs_bucket_artifacts: model-artifacts
+  gcs_bucket_data: model-data
+ 
+  # Artifact Registry
+  artifact_registry_repo: news-topic-classifier
+ 
+  # Vertex AI
+  vertex_ai_sa: vertex-ai-sa
+ 
+# MLflow — GCS tracking for dev
+mlflow:
+  tracking_uri: gs://model-artifacts/mlflow

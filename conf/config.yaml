@@ -1,0 +1,29 @@
+# =============================================================================
+# conf/config.yaml
+# Main Hydra configuration entry point
+# Composes environment + model + training + data configs
+# =============================================================================
+
+defaults:
+  - environment: local     # override via: python train.py environment=dev
+  - model: default
+  - training: default
+  - data: default
+  - _self_                 # values in this file override defaults
+
+# =============================================================================
+# PROJECT
+# =============================================================================
+
+project:
+  name: news-topic-classifier
+  version: "0.1.0"
+
+# =============================================================================
+# MLFLOW
+# =============================================================================
+
+mlflow:
+  experiment_name: news-topic-classifier
+  tracking_uri: mlruns       # local by default — override per environment
+  run_name: null             # auto-generated if null
