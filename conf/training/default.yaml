@@ -4,22 +4,19 @@
 # Override via CLI: python train.py training.epochs=10 training.lr=3e-5
 # =============================================================================
  
-# @package _global_
+epochs: 5
+batch_size: 32
+lr: 2e-5
+warmup_steps: 100
+weight_decay: 0.01
+val_split: 0.1
+test_split: 0.1
+seed: 42
  
-training:
-  epochs: 5
-  batch_size: 32
-  lr: 2e-5
-  warmup_steps: 100
-  weight_decay: 0.01
-  val_split: 0.1
-  test_split: 0.1
-  seed: 42
+# Checkpointing
+save_steps: 500
+eval_steps: 500
+logging_steps: 100
  
-  # Checkpointing
-  save_steps: 500
-  eval_steps: 500
-  logging_steps: 100
- 
-  # Early stopping
-  early_stopping_patience: 3
+# Early stopping
+early_stopping_patience: 3

@@ -14,7 +14,11 @@ bq_title_column: title
 gcs_raw_path: data/raw/
 gcs_interim_path: data/interim/
 gcs_processed_path: data/processed/
- 
+
+# GCS URI of the raw Parquet produced by dataset.py
+# Pass via CLI override: data.raw_gcs_uri=gs://...
+raw_gcs_uri: null
+
 # Local paths (used when environment=local)
 local_raw_file: data/raw/sample.csv
 local_interim_path: data/interim/
