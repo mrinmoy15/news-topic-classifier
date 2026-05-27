@@ -5,11 +5,12 @@
 # =============================================================================
 
 defaults:
-  - environment: local     # override via: python train.py environment=dev
+  - environment: dev
   - model: default
   - training: default
   - data: default
-  - _self_                 # values in this file override defaults
+  - _self_
+
 
 # =============================================================================
 # PROJECT
@@ -19,11 +20,12 @@ project:
   name: news-topic-classifier
   version: "0.1.0"
 
-# =============================================================================
-# MLFLOW
-# =============================================================================
 
-mlflow:
-  experiment_name: news-topic-classifier
-  tracking_uri: mlruns       # local by default — override per environment
-  run_name: null             # auto-generated if null
+# =============================================================================
+# logs
+# =============================================================================
+hydra:
+  run:
+    dir: hydra_logs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra_logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}

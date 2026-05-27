@@ -3,20 +3,17 @@
 # BERT model configuration
 # =============================================================================
  
-# @package _global_
+bert_base_model: bert-base-uncased
+num_labels: 5
+max_seq_length: 512
+head_tokens: 341       # 2/3 of 512 (minus special tokens)
+tail_tokens: 171       # 1/3 of 512 (minus special tokens)
+dropout: 0.3
  
-model:
-  bert_base_model: bert-base-uncased
-  num_labels: 5
-  max_seq_length: 512
-  head_tokens: 341       # 2/3 of 512 (minus special tokens)
-  tail_tokens: 171       # 1/3 of 512 (minus special tokens)
-  dropout: 0.3
- 
-  # Label mapping
-  labels:
-    - business
-    - entertainment
-    - politics
-    - sport
-    - tech
+# Label mapping
+labels:
+  - business
+  - entertainment
+  - politics
+  - sport
+  - tech
