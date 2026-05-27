@@ -217,8 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-
-
 # GCP / GOOGLE CLOUD
 # Service account keys — NEVER commit these
 *-service-account*.json
@@ -247,4 +245,14 @@ initial_setup_structure.ps1
 
 # model artifacts
 models/*
-!models/.gitkeep 
+!models/.gitkeep
+
+# data files
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+!data/**/.gitkeep
+
+# ignore hydra logs
+hydra_logs/

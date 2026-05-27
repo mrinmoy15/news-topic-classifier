@@ -1,39 +1,435 @@
-# =============================================================================
-# news_topic_classifier/dataset.py
-#
-# Responsibilities:
-#   1. extract_from_bigquery() — BQ → Parquet (GCS or local)
-#   2. load_from_filesystem()  — local Parquet/CSV → HuggingFace Dataset
-#   3. BBCNewsDataset          — PyTorch Dataset wrapping HuggingFace Dataset
-#
-# Data flow:
-#   BigQuery
-#       └── extract_from_bigquery()
-#               ├── local:      saves to data/raw/sample.parquet
-#               └── dev/pp/prd: exports directly to GCS via BQ export job
-#
-#   Parquet (GCS or local)
-#       └── load_from_filesystem() / load_from_gcs()
-#               └── HuggingFace Dataset (memory mapped, arrow backed)
-#                       └── BBCNewsDataset (PyTorch Dataset wrapper)
-#                               └── DataLoader (batches for training)
-# =============================================================================
- 
 from __future__ import annotations
- 
+
 import logging
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
- 
-import pyarrow as pa
 import pyarrow.parquet as pq
-from datasets import Dataset as HFDataset
+import torch
 from google.cloud import bigquery
-from google.cloud import bigquery_storage
-from omegaconf import DictConfig
 from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizerBase
- 
+
 from news_topic_classifier.config import LABEL2ID
- 
+
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# SECTION 1 — SQL builder
+# =============================================================================
+def _build_extraction_query(
+    source_table: str,
+    text_col: str,
+    label_col: str,
+    title_col: str,
+    input_table_size: Optional[int],
+    sample_size: Optional[int],
+) -> str:
+    """
+    Build the BQ extraction SQL.
+
+    Full table when sample_size is None.
+    FARM_FINGERPRINT-based deterministic sampling when sample_size is set.
+
+    Parameters
+    ----------
+    source_table : str
+        Fully qualified BQ table e.g. `bigquery-public-data.bbc_news.fulltext`
+    text_col : str
+        Column containing article body text (`body`).
+    label_col : str
+        Column containing labels (`category`).
+    title_col : str
+        Column containing article titles (`title`).
+    input_table_size : int or None
+        Total row count of the input table. Required when sample_size is set.
+    sample_size : int or None
+        None = full table. int = deterministic FARM_FINGERPRINT sample.
+
+    Returns
+    -------
+    str
+        SQL string ready to pass to ``client.query()``.
+    """
+
+    case_clauses = "\n".join(
+        f"WHEN '{cat}' THEN {lid}"
+        for cat, lid in LABEL2ID.items()
+    )
+
+    label_case = f"""
+        CASE {label_col}
+            {case_clauses}
+            ELSE NULL
+        END AS label
+    """
+
+    base_filter = f"""
+        WHERE {text_col}  IS NOT NULL
+          AND {label_col} IS NOT NULL
+          AND {title_col} IS NOT NULL
+    """
+
+    if sample_size is None:
+        query = f"""
+            SELECT
+                title,
+                {label_col} AS category,
+                {text_col}  AS text,
+                {label_case}
+            FROM `{source_table}`
+            {base_filter}
+        """
+    else:
+
+        pct = min(round(sample_size / input_table_size * 100), 100)
+        query = f"""
+            SELECT
+                title,
+                {label_col} AS category,
+                {text_col}  AS text,
+                {label_case}
+            FROM `{source_table}`
+            {base_filter}
+                AND MOD(ABS(FARM_FINGERPRINT({label_col})), 100) < {pct}
+        """
+    
+    # logg the query
+    logger.info("*" * 80)
+    logger.info("Constructed input BQ query: \n%s", query)
+    logger.info("*" * 80)
+
+    return query
+
+
+
+
+# =============================================================================
+# SECTION 2 — GCS write
+# =============================================================================
+def _gcs_output_path(gcs_bucket_data: str) -> str:
+    """
+    Build a versioned GCS Parquet path using UTC timestamp.
+
+    Pattern: ``gs://{bucket}/data/raw/{YYYY-MM-DDTHH-MM-SS}/bbc_news.parquet``
+
+    Using HH-MM-SS (hyphens not colons) so the path is valid on all OS
+    and unambiguous in GCS object names.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    return f"gs://{gcs_bucket_data}/data/raw/{ts}/bbc_news.parquet"
+
+
+# =============================================================================
+# SECTION 3 — Public entry point
+# =============================================================================
+def extract_from_bigquery(
+    gcp_project: str,
+    bq_dataset: str,
+    source_table: str,
+    text_col: str,
+    label_col: str,
+    title_col: str,
+    gcs_bucket_data: str,
+    input_table_size: Optional[int],
+    sample_size: Optional[int] = None,
+) -> str:
+    """
+    Extract BBC news data from BigQuery and write to GCS as Parquet.
+    
+    Flow
+    ----
+    1. Run filtered SQL with label mapping → temp BQ table
+    2. Export temp BQ table → GCS Parquet (no data in Python memory)
+    3. Delete temp BQ table
+
+    Parameters
+    ----------
+    gcp_project : str
+        GCP project ID e.g. `cs-cdwp-data-dev2188`.
+    bq_dataset : str
+        BQ dataset to write the temp table into e.g. `DATA_SCNCE_DEV_DATA`.
+    source_table : str
+        Fully qualified source BQ table e.g. `bigquery-public-data.bbc_news.fulltext`.
+    text_col : str
+        text column name (`body`).
+    label_col : str
+        Label column name (`category`).
+    title_col : str
+        Title column name (`title`).
+    gcs_output_uri : str
+        GCS URI e.g. `gs://model-data/data/raw/2026-05-25T14-32-01/bbc_news.parquet`.
+    input_table_size : int or None
+        Total row count of the source table. Required only when sample_size is set.
+    sample_size : int or None
+        None = full table (production default).
+        int  = deterministic FARM_FINGERPRINT sample (dev / testing).
+    
+    Returns
+    -------
+    str
+        GCS URI of the written Parquet file — passed as output artifact
+        to the next pipeline step (preprocess component).
+    """
+
+    client = bigquery.Client(project=gcp_project)
+
+    # ------------------------------------------------------------------
+    # Step 1 — Run filtered SQL → temp BQ table
+    # ------------------------------------------------------------------
+
+    temp_table_id = (
+        f"{gcp_project}.{bq_dataset}.bbc_news_extract_temp"
+    )
+
+    sql = _build_extraction_query(
+        source_table=source_table,
+        text_col=text_col,
+        label_col=label_col,
+        title_col=title_col,
+        input_table_size=input_table_size,
+        sample_size=sample_size,
+    )
+
+    job_config = bigquery.QueryJobConfig(
+        destination=temp_table_id,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+    )
+
+    logger.info("Running extraction query -> temp table %s", temp_table_id)
+
+    query_job = client.query(sql, job_config=job_config)
+    
+    # Wait for completion
+    query_job.result()
+
+    logger.info(
+        "Temp table written — %d rows.",
+        client.get_table(temp_table_id).num_rows,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 2 — Export temp BQ table → GCS Parquet
+    # ------------------------------------------------------------------
+
+    extract_job_config = bigquery.ExtractJobConfig(
+        destination_format=bigquery.DestinationFormat.PARQUET,
+        compression=bigquery.Compression.SNAPPY,
+    )
+
+    gcs_output_uri = _gcs_output_path(gcs_bucket_data)
+
+    logger.info("Exporting temp table -> %s", gcs_output_uri)
+
+    extract_job = client.extract_table(
+        source=temp_table_id,
+        destination_uris=[gcs_output_uri],
+        job_config=extract_job_config,
+    )
+    
+    # Wait for completion
+    extract_job.result()
+
+    logger.info("Export complete -> %s", gcs_output_uri)
+
+    # ------------------------------------------------------------------
+    # Step 3 — Delete temp BQ table
+    # ------------------------------------------------------------------
+    client.delete_table(temp_table_id)
+    logger.info("Temp table %s deleted.", temp_table_id)
+
+    return gcs_output_uri
+
+
+# =============================================================================
+# SECTION 4 — Dataset
+# =============================================================================
+class BBCNewsDataset(Dataset):
+
+    """
+    PyTorch Dataset for BBC news classification.
+
+    Reads from a local Parquet file via PyArrow memory-mapping. 
+    Each __getitem__ call reads only the requested row from the memory-mapped file.
+
+    The GCS → local download is handled by the training component
+    (pipelines/components/train.py) before instantiating this class.
+    
+    Parameters
+    ----------
+    local_parquet_path : str
+        Local path to the Parquet file e.g.
+        `/tmp/bbc_news.parquet`
+    tokenizer : PreTrainedTokenizer
+        HuggingFace tokenizer — loaded once externally and passed in.
+    max_length : int
+        Maximum token sequence length (512 for BERT).
+    head_tokens : int
+        Number of tokens to keep from the start of the article (341).
+    tail_tokens : int
+        Number of tokens to keep from the end of the article (171).
+    use_title : bool
+        If True, prepend title to body text before tokenization.
+
+    Examples
+    --------
+    >>> dataset = BBCNewsDataset(
+    ...     local_parquet_path="/tmp/bbc_news.parquet",
+    ...     tokenizer=tokenizer,
+    ... )
+    >>> len(dataset)
+    2225
+    >>> dataset[0].keys()
+    dict_keys(['input_ids', 'attention_mask', 'label'])
+    """
+
+    def __init__(
+        self,
+        local_parquet_path: str,
+        tokenizer,
+        max_length:  int  = 512,
+        head_tokens: int  = 341,
+        tail_tokens: int  = 171,
+        use_title:   bool = False,
+    ) -> None:
+        self.tokenizer   = tokenizer
+        self.max_length  = max_length
+        self.head_tokens = head_tokens
+        self.tail_tokens = tail_tokens
+        self.use_title   = use_title
+
+        self.table = pq.read_table(
+            local_parquet_path,
+            columns=["text", "label", "title"] if use_title else ["text", "label"],
+            memory_map=True,
+        )
+
+        logger.info(
+            "BBCNewsDataset ready — %d rows, memory-mapped from %s",
+            len(self.table),
+            local_parquet_path,
+        )
+
+    def __len__(self) -> int:
+        return len(self.table)
+    
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        
+        text  = self.table.column("text")[idx].as_py()
+        label = self.table.column("label")[idx].as_py()
+
+        # Title + body combination if enabled
+        if self.use_title:
+            title = self.table.column("title")[idx].as_py()
+            text  = title + " " + text
+
+        tokens = self.tokenizer.encode(
+            text,
+            add_special_tokens=False,
+            truncation=False,
+        )
+
+        if len(tokens) > (self.head_tokens + self.tail_tokens):
+            tokens = tokens[:self.head_tokens] + tokens[-self.tail_tokens:]
+
+        # Add [CLS] and [SEP]
+        tokens = (
+            [self.tokenizer.cls_token_id]
+            + tokens
+            + [self.tokenizer.sep_token_id]
+        )
+
+        # Pad to max_length
+        padding_length = self.max_length - len(tokens)
+        attention_mask = [1] * len(tokens) + [0] * padding_length
+        tokens         = tokens + [self.tokenizer.pad_token_id] * padding_length
+
+        return {
+            "input_ids":      torch.tensor(tokens,         dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "label":          torch.tensor(label,          dtype=torch.long),
+        }
+
+
+if __name__ == "__main__":
+    
+    import hydra
+    from omegaconf import DictConfig
+    from transformers import BertTokenizer
+    from pathlib import Path
+    import os
+    from google.cloud import storage
+
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+    @hydra.main(
+        config_path= str(PROJECT_ROOT / "conf"),
+        config_name="config",
+        version_base=None,
+    )
+    def main(cfg: DictConfig) -> None:
+
+        print("\n" + "=" * 80)
+        print("BQ extract → GCS Parquet")
+        print("=" * 80)
+
+        gcs_uri = extract_from_bigquery(
+            gcp_project=cfg.environment.gcp_project,
+            bq_dataset=cfg.environment.bq_dataset,
+            source_table=cfg.data.bq_source_table,
+            text_col=cfg.data.bq_text_column,
+            label_col=cfg.data.bq_label_column,
+            title_col=cfg.data.bq_title_column,
+            gcs_bucket_data=cfg.environment.gcs_bucket_data,
+            input_table_size=None,
+            sample_size=None,
+        )
+        print(f"Written to: {gcs_uri}")
+
+
+        print("\n" + "=" * 80)
+        print("BBCNewsDataset")
+        print("=" * 80)
+
+        # Download from GCS → local /tmp/
+        if os.getenv("CLOUD_ML_PROJECT_ID"):
+            local_data_path = "/tmp/bbc_news.parquet"
+        else:
+            local_data_path = str(PROJECT_ROOT / "data" / "interim" / "bbc_news.parquet")
+        
+        path       = gcs_uri.replace("gs://", "")
+        bucket_name = path.split("/")[0]
+        blob_name   = "/".join(path.split("/")[1:])
+
+        storage_client = storage.Client(project=cfg.environment.gcp_project)
+        bucket         = storage_client.bucket(bucket_name)
+        blob           = bucket.blob(blob_name)
+        blob.download_to_filename(local_data_path)
+        print(f"Downloaded to {local_data_path}")
+
+        LOCAL_MODEL_PATH = PROJECT_ROOT / "models" / "base-models" / "bert-base-uncased"
+
+        # Load tokenizer from local path
+        tokenizer = BertTokenizer.from_pretrained(
+            LOCAL_MODEL_PATH,
+            local_files_only=True,
+        )
+
+        # Instantiate dataset
+        dataset = BBCNewsDataset(
+            local_parquet_path=local_data_path,
+            tokenizer=tokenizer,
+            max_length=cfg.model.max_seq_length,
+            head_tokens=cfg.model.head_tokens,
+            tail_tokens=cfg.model.tail_tokens,
+            use_title=False,
+        )
+
+        print(f"Dataset length : {len(dataset)}")
+        print(f"Sample keys    : {dataset[0].keys()}")
+        print(f"input_ids shape: {dataset[0]['input_ids'].shape}")
+        print(f"label          : {dataset[0]['label']}")
+
+    main()
+
+
+

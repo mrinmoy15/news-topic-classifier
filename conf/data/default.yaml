@@ -3,24 +3,23 @@
 # Data pipeline configuration
 # =============================================================================
  
-# @package _global_
+
+# BigQuery source
+bq_source_table: bigquery-public-data.bbc_news.fulltext
+bq_text_column: body
+bq_label_column: category
+bq_title_column: title
  
-data:
-  # BigQuery source
-  bq_source_table: bigquery-public-data.bbc_news.fulltext
-  bq_text_column: body
-  bq_label_column: filename        # derives category from filename prefix
+# GCS paths (relative to bucket root)
+gcs_raw_path: data/raw/
+gcs_interim_path: data/interim/
+gcs_processed_path: data/processed/
  
-  # GCS paths (relative to bucket root)
-  gcs_raw_path: data/raw/
-  gcs_interim_path: data/interim/
-  gcs_processed_path: data/processed/
+# Local paths (used when environment=local)
+local_raw_file: data/raw/sample.csv
+local_interim_path: data/interim/
+local_processed_path: data/processed/
  
-  # Local paths (used when environment=local)
-  local_raw_file: data/raw/sample.csv
-  local_interim_path: data/interim/
-  local_processed_path: data/processed/
- 
-  # Processing
-  sample_size: null                # null = use full dataset; int = sample N rows
-  file_format: parquet             # parquet or csv
+# Processing
+sample_size: null                
+file_format: parquet
