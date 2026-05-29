@@ -21,6 +21,7 @@ x-gcp-credentials: &gcp-credentials
   environment:
     GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
     GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-cs-cdwp-data-dev2188}
+    CLOUD_ML_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-cs-cdwp-data-dev2188}
 
 services:
 

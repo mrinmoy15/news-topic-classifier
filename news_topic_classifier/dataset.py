@@ -391,11 +391,18 @@ if __name__ == "__main__":
         blob.download_to_filename(local_data_path)
         print(f"Downloaded to {local_data_path}")
 
-        LOCAL_MODEL_PATH = PROJECT_ROOT / "models" / "base-models" / "bert-base-uncased"
+        if os.getenv("CLOUD_ML_PROJECT_ID"):
+            from news_topic_classifier.modeling.train import download_base_model
+            local_model_path = download_base_model(
+                gcs_model_uri=f"gs://{cfg.environment.gcs_bucket_artifacts}/models/base-models/{cfg.model.bert_base_model}/",
+                local_dir="/tmp/base-model",
+                gcp_project=cfg.environment.gcp_project,
+            )
+        else:
+            local_model_path = str(PROJECT_ROOT / "models" / "base-models" / cfg.model.bert_base_model)
 
-        # Load tokenizer from local path
         tokenizer = BertTokenizer.from_pretrained(
-            LOCAL_MODEL_PATH,
+            local_model_path,
             local_files_only=True,
         )
 

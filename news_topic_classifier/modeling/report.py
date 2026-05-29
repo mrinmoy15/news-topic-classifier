@@ -12,6 +12,7 @@ import seaborn as sns
 from google.cloud import storage
 from mlflow import MlflowClient
 from omegaconf import DictConfig, OmegaConf
+from news_topic_classifier.modeling.train import _setup_mlflow_tracking
 from sklearn.metrics import confusion_matrix
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,7 @@ def fetch_run_data(run_id: str, tracking_uri: str) -> dict:
             "history": dict[str, list[float]] — per-epoch metric values
         }
     """
-    mlflow.set_tracking_uri(tracking_uri)
+    _setup_mlflow_tracking(tracking_uri)
     client = MlflowClient()
 
     run = client.get_run(run_id)
@@ -571,13 +572,14 @@ if __name__ == "__main__":
         print("report.py — smoke test")
         print("=" * 80)
 
-        # Redirect MLflow to local SQLite
+        # Redirect MLflow to SQLite — GCS tracking URI requires a hosted server
+        mlflow_db = "/tmp/mlflow.db" if os.getenv("CLOUD_ML_PROJECT_ID") else str(PROJECT_ROOT / "mlflow.db")
         cfg = OmegaConf.merge(
             cfg,
-            {"environment": {"mlflow": {"tracking_uri": f"sqlite:///{PROJECT_ROOT}/mlflow.db"}}},
+            {"environment": {"mlflow": {"tracking_uri": f"sqlite:///{mlflow_db}"}}},
         )
 
-        run_id              = OmegaConf.select(cfg, "report.run_id")
+        run_id = OmegaConf.select(cfg, "report.run_id")
         gcs_predictions_uri = OmegaConf.select(cfg, "report.gcs_predictions_uri")
 
         if not run_id or not gcs_predictions_uri:

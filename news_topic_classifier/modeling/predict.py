@@ -17,7 +17,7 @@ from transformers import BertForSequenceClassification
 from transformers import BertTokenizerFast
 
 from news_topic_classifier.dataset import BBCNewsDataset
-from news_topic_classifier.modeling.train import download_splits
+from news_topic_classifier.modeling.train import download_splits, _setup_mlflow_tracking
 
 logger = logging.getLogger(__name__)
 
@@ -296,10 +296,10 @@ def predict(
     """
     # MLflow setup
     tracking_uri = OmegaConf.select(
-        cfg, "environment.mlflow.tracking_uri", 
-        default = "sqlite:///mlflow.db"
+        cfg, "environment.mlflow.tracking_uri",
+        default="sqlite:///mlflow.db"
     )
-    mlflow.set_tracking_uri(tracking_uri)
+    _setup_mlflow_tracking(tracking_uri)
     mlflow.set_experiment(cfg.project.name)
 
     # Load model
@@ -370,10 +370,11 @@ if __name__ == "__main__":
         print("predict.py — smoke test")
         print("=" * 80)
 
-        # Redirect MLflow to local SQLite so the smoke test doesn't need GCS.
+        # Redirect MLflow to SQLite — GCS tracking URI requires a hosted server
+        mlflow_db = "/tmp/mlflow.db" if os.getenv("CLOUD_ML_PROJECT_ID") else str(PROJECT_ROOT / "mlflow.db")
         cfg = OmegaConf.merge(
             cfg,
-            {"environment": {"mlflow": {"tracking_uri": f"sqlite:///{PROJECT_ROOT}/mlflow.db"}}},
+            {"environment": {"mlflow": {"tracking_uri": f"sqlite:///{mlflow_db}"}}},
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -396,7 +397,15 @@ if __name__ == "__main__":
             test_path = str(Path(local_dir) / "test.parquet")
 
         # Fine-tuned model & tokenizer
-        model_path = str(PROJECT_ROOT / "models" / "bert-bbc-finetuned")
+        if os.getenv("CLOUD_ML_PROJECT_ID"):
+            from news_topic_classifier.modeling.train import download_base_model
+            model_path = download_base_model(
+                gcs_model_uri=f"gs://{cfg.environment.gcs_bucket_artifacts}/models/bert-bbc-finetuned/",
+                local_dir="/tmp/finetuned-model",
+                gcp_project=cfg.environment.gcp_project,
+            )
+        else:
+            model_path = str(PROJECT_ROOT / "models" / "bert-bbc-finetuned")
 
         tokenizer = BertTokenizerFast.from_pretrained(model_path, local_files_only=True)
 

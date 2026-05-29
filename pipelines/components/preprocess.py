@@ -1,11 +1,14 @@
-from __future__ import annotations
+import os
 
 from kfp import dsl
 
-
-@dsl.component(
-    base_image="us-central1-docker.pkg.dev/cs-cdwp-data-dev2188/news-topic-classifier/trainer:latest",
+_TRAINER_IMAGE = os.environ.get(
+    "TRAINER_IMAGE",
+    "us-central1-docker.pkg.dev/cs-cdwp-data-dev2188/news-topic-classifier/trainer:latest",
 )
+
+
+@dsl.component(base_image=_TRAINER_IMAGE)
 def preprocess_component(
     gcp_project: str,
     bq_dataset: str,

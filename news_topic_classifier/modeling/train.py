@@ -20,6 +20,17 @@ from news_topic_classifier.modeling.bert_classifier import build_model
 logger = logging.getLogger(__name__)
 
 
+def _setup_mlflow_tracking(tracking_uri: str) -> None:
+    """Set MLflow tracking URI, fetching a GCP OIDC token for Cloud Run endpoints."""
+    if ".run.app" in tracking_uri:
+        import google.auth.transport.requests
+        import google.oauth2.id_token
+        auth_req = google.auth.transport.requests.Request()
+        token = google.oauth2.id_token.fetch_id_token(auth_req, tracking_uri)
+        os.environ["MLFLOW_TRACKING_TOKEN"] = token
+    mlflow.set_tracking_uri(tracking_uri)
+
+
 # =============================================================================
 # SECTION 1 — GCS download
 # =============================================================================
@@ -125,6 +136,12 @@ def download_base_model(
         logger.info("Downloaded %s -> %s", blob.name, local_file)
 
     logger.info("Base model downloaded to %s (%d files)", local_dir_path, len(blobs))
+
+    # If gsutil cp -r created a single nested subdirectory (e.g. bert-base-uncased/),
+    # return that subdirectory so from_pretrained() finds the model files directly.
+    subdirs = [p for p in local_dir_path.iterdir() if p.is_dir()]
+    if len(subdirs) == 1:
+        return str(subdirs[0])
     return str(local_dir_path)
 
 
@@ -467,10 +484,10 @@ def train(
     """
     # MLflow setup
     tracking_uri = OmegaConf.select(
-        cfg, "environment.mlflow.tracking_uri", 
-        default = "sqlite:///mlflow.db"
+        cfg, "environment.mlflow.tracking_uri",
+        default="sqlite:///mlflow.db"
     )
-    mlflow.set_tracking_uri(tracking_uri)
+    _setup_mlflow_tracking(tracking_uri)
     mlflow.set_experiment(cfg.project.name)
 
     # Optimizer & scheduler
@@ -596,17 +613,23 @@ if __name__ == "__main__":
         # Redirect MLflow to local SQLite for smoke test — Hydra configs are
         # read-only so merge produces a new unfrozen config. Use an absolute path
         # so the DB lands in the project root regardless of Hydra's CWD change.
+        mlflow_db = "/tmp/mlflow.db" if os.getenv("CLOUD_ML_PROJECT_ID") else str(PROJECT_ROOT / "mlflow.db")
         cfg = OmegaConf.merge(
             cfg,
-            {"environment": {"mlflow": {"tracking_uri": f"sqlite:///{PROJECT_ROOT}/mlflow.db"}}},
+            {"environment": {"mlflow": {"tracking_uri": f"sqlite:///{mlflow_db}"}}},
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Device: {device}")
 
-        model_path = str(
-            PROJECT_ROOT / "models" / "base-models" / cfg.model.bert_base_model
-        )
+        if os.getenv("CLOUD_ML_PROJECT_ID"):
+            model_path = download_base_model(
+                gcs_model_uri=f"gs://{cfg.environment.gcs_bucket_artifacts}/models/base-models/{cfg.model.bert_base_model}/",
+                local_dir="/tmp/base-model",
+                gcp_project=cfg.environment.gcp_project,
+            )
+        else:
+            model_path = str(PROJECT_ROOT / "models" / "base-models" / cfg.model.bert_base_model)
 
         tokenizer = BertTokenizerFast.from_pretrained(model_path, local_files_only=True)
 
@@ -644,7 +667,11 @@ if __name__ == "__main__":
         ).to(device)
 
         # Train
-        save_path = str(PROJECT_ROOT / "models" / "bert-bbc-finetuned")
+        save_path = (
+            "/tmp/bert-bbc-finetuned"
+            if os.getenv("CLOUD_ML_PROJECT_ID")
+            else str(PROJECT_ROOT / "models" / "bert-bbc-finetuned")
+        )
 
         best_val_acc, gcs_model_uri, run_id = train(
             cfg=cfg,
