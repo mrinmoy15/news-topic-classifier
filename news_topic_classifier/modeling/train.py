@@ -485,7 +485,7 @@ def train(
     best_val_acc = 0.0
     no_improve   = 0
 
-    with mlflow.start_run():
+    with mlflow.start_run() as run:
         mlflow.log_params({
             "bert_base_model": cfg.model.bert_base_model,
             "num_labels": cfg.model.num_labels,
@@ -567,7 +567,7 @@ def train(
         checkpoint_path.unlink()
         logger.info("Model saved to %s and uploaded to %s.", save_dir, gcs_model_uri)
 
-    return best_val_acc, gcs_model_uri
+    return best_val_acc, gcs_model_uri, run.info.run_id
 
 
 # =============================================================================
@@ -646,7 +646,7 @@ if __name__ == "__main__":
         # Train
         save_path = str(PROJECT_ROOT / "models" / "bert-bbc-finetuned")
 
-        best_val_acc, gcs_model_uri = train(
+        best_val_acc, gcs_model_uri, run_id = train(
             cfg=cfg,
             model=model,
             tokenizer=tokenizer,
@@ -658,6 +658,7 @@ if __name__ == "__main__":
 
         print(f"\nBest val accuracy : {best_val_acc:.4f}")
         print(f"Model uploaded to : {gcs_model_uri}")
+        print(f"MLflow run ID     : {run_id}")
         print("Smoke test passed.")
 
     main()
