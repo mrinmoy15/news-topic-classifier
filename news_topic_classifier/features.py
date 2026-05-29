@@ -24,7 +24,6 @@ def _build_preprocessing_query(
     ----------
     source_table : str
         Fully qualified BQ table or external table ID.
-        e.g. `my_project.my_dataset.bbc_news_raw_ext`
     val_pct : int
         Validation split as a whole-number percentage  e.g. 10 for 10 %.
     test_pct : int

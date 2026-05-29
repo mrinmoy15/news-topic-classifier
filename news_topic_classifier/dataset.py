@@ -110,7 +110,7 @@ def _gcs_output_path(gcs_bucket_data: str) -> str:
     """
     Build a versioned GCS Parquet path using UTC timestamp.
 
-    Pattern: ``gs://{bucket}/data/raw/{YYYY-MM-DDTHH-MM-SS}/bbc_news.parquet``
+    Pattern: `gs://{bucket}/data/raw/{YYYY-MM-DDTHH-MM-SS}/bbc_news.parquet`
 
     Using HH-MM-SS (hyphens not colons) so the path is valid on all OS
     and unambiguous in GCS object names.
@@ -174,7 +174,7 @@ def extract_from_bigquery(
     client = bigquery.Client(project=gcp_project)
 
     # ------------------------------------------------------------------
-    # Step 1 — Run filtered SQL → temp BQ table
+    # Step 1 — Run filtered SQL -> temp BQ table
     # ------------------------------------------------------------------
 
     temp_table_id = (
@@ -203,12 +203,12 @@ def extract_from_bigquery(
     query_job.result()
 
     logger.info(
-        "Temp table written — %d rows.",
+        "Temp table written - %d rows.",
         client.get_table(temp_table_id).num_rows,
     )
 
     # ------------------------------------------------------------------
-    # Step 2 — Export temp BQ table → GCS Parquet
+    # Step 2 — Export temp BQ table -> GCS Parquet
     # ------------------------------------------------------------------
 
     extract_job_config = bigquery.ExtractJobConfig(
@@ -248,36 +248,32 @@ class BBCNewsDataset(Dataset):
     """
     PyTorch Dataset for BBC news classification.
 
-    Reads from a local Parquet file via PyArrow memory-mapping. 
-    Each __getitem__ call reads only the requested row from the memory-mapped file.
+    Reads from a local Parquet file via PyArrow memory-mapping.
+    Each __getitem__ call reads only the requested row from the memory-mapped
+    file, then delegates tokenization, truncation, and padding to the
+    HuggingFace fast tokenizer in a single Rust call.
 
-    The GCS → local download is handled by the training component
-    (pipelines/components/train.py) before instantiating this class.
-    
     Parameters
     ----------
     local_parquet_path : str
-        Local path to the Parquet file e.g.
-        `/tmp/bbc_news.parquet`
-    tokenizer : PreTrainedTokenizer
-        HuggingFace tokenizer — loaded once externally and passed in.
+        Local path to the Parquet file.
+    tokenizer : PreTrainedTokenizerFast
+        HuggingFace fast tokenizer — loaded once externally and passed in.
+        Must be a fast (Rust-backed) tokenizer for efficient truncation.
     max_length : int
-        Maximum token sequence length (512 for BERT).
-    head_tokens : int
-        Number of tokens to keep from the start of the article (341).
-    tail_tokens : int
-        Number of tokens to keep from the end of the article (171).
+        Maximum token sequence length including [CLS] and [SEP] (512 for BERT).
+        Texts longer than this are truncated from the right by the tokenizer.
     use_title : bool
         If True, prepend title to body text before tokenization.
 
     Examples
     --------
     >>> dataset = BBCNewsDataset(
-    ...     local_parquet_path="/tmp/bbc_news.parquet",
+    ...     local_parquet_path="/tmp/train.parquet",
     ...     tokenizer=tokenizer,
     ... )
     >>> len(dataset)
-    2225
+    1747
     >>> dataset[0].keys()
     dict_keys(['input_ids', 'attention_mask', 'label'])
     """
@@ -286,16 +282,12 @@ class BBCNewsDataset(Dataset):
         self,
         local_parquet_path: str,
         tokenizer,
-        max_length:  int  = 512,
-        head_tokens: int  = 341,
-        tail_tokens: int  = 171,
-        use_title:   bool = False,
+        max_length: int  = 512,
+        use_title:  bool = False,
     ) -> None:
-        self.tokenizer   = tokenizer
-        self.max_length  = max_length
-        self.head_tokens = head_tokens
-        self.tail_tokens = tail_tokens
-        self.use_title   = use_title
+        self.tokenizer  = tokenizer
+        self.max_length = max_length
+        self.use_title  = use_title
 
         self.table = pq.read_table(
             local_parquet_path,
@@ -304,7 +296,7 @@ class BBCNewsDataset(Dataset):
         )
 
         logger.info(
-            "BBCNewsDataset ready — %d rows, memory-mapped from %s",
+            "BBCNewsDataset ready - %d rows, memory-mapped from %s",
             len(self.table),
             local_parquet_path,
         )
@@ -322,31 +314,21 @@ class BBCNewsDataset(Dataset):
             title = self.table.column("title")[idx].as_py()
             text  = title + " " + text
 
-        tokens = self.tokenizer.encode(
+        encoded = self.tokenizer(
             text,
-            add_special_tokens=False,
-            truncation=False,
+            max_length=self.max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
         )
 
-        if len(tokens) > (self.head_tokens + self.tail_tokens):
-            tokens = tokens[:self.head_tokens] + tokens[-self.tail_tokens:]
-
-        # Add [CLS] and [SEP]
-        tokens = (
-            [self.tokenizer.cls_token_id]
-            + tokens
-            + [self.tokenizer.sep_token_id]
-        )
-
-        # Pad to max_length
-        padding_length = self.max_length - len(tokens)
-        attention_mask = [1] * len(tokens) + [0] * padding_length
-        tokens         = tokens + [self.tokenizer.pad_token_id] * padding_length
+        tokens = encoded["input_ids"].squeeze(0)
+        attention_mask = encoded["attention_mask"].squeeze(0)
 
         return {
-            "input_ids":      torch.tensor(tokens,         dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
-            "label":          torch.tensor(label,          dtype=torch.long),
+            "input_ids": tokens,
+            "attention_mask": attention_mask,
+            "label": torch.tensor(label, dtype=torch.long),
         }
 
 
@@ -390,19 +372,22 @@ if __name__ == "__main__":
         print("BBCNewsDataset")
         print("=" * 80)
 
-        # Download from GCS → local /tmp/
-        if os.getenv("CLOUD_ML_PROJECT_ID"):
-            local_data_path = "/tmp/bbc_news.parquet"
-        else:
-            local_data_path = str(PROJECT_ROOT / "data" / "interim" / "bbc_news.parquet")
+        # Download from GCS -> local
+        local_dir = (
+            "/tmp" 
+            if os.getenv("CLOUD_ML_PROJECT_ID") 
+            else (PROJECT_ROOT / "data" / "interim")
+        )
+     
+        local_data_path =  str(Path(local_dir) / "bbc_news.parquet")
         
-        path       = gcs_uri.replace("gs://", "")
+        path = gcs_uri.replace("gs://", "")
         bucket_name = path.split("/")[0]
         blob_name   = "/".join(path.split("/")[1:])
 
         storage_client = storage.Client(project=cfg.environment.gcp_project)
-        bucket         = storage_client.bucket(bucket_name)
-        blob           = bucket.blob(blob_name)
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
         blob.download_to_filename(local_data_path)
         print(f"Downloaded to {local_data_path}")
 
@@ -419,8 +404,6 @@ if __name__ == "__main__":
             local_parquet_path=local_data_path,
             tokenizer=tokenizer,
             max_length=cfg.model.max_seq_length,
-            head_tokens=cfg.model.head_tokens,
-            tail_tokens=cfg.model.tail_tokens,
             use_title=False,
         )
 

@@ -6,8 +6,8 @@
 bert_base_model: bert-base-uncased
 num_labels: 5
 max_seq_length: 512
-head_tokens: 341       # 2/3 of 512 (minus special tokens)
-tail_tokens: 171       # 1/3 of 512 (minus special tokens)
+head_tokens: 340       # 2/3 of 510 usable tokens (512 - 2 for [CLS] and [SEP])
+tail_tokens: 170       # 1/3 of 510 usable tokens
 dropout: 0.3
  
 # Label mapping

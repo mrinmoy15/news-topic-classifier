@@ -29,19 +29,9 @@ NUM_LABELS = len(LABEL2ID)
 # HELPERS
 # -----------------------------------------------------------------------------
 
-def get_gcs_artifacts_uri(cfg: DictConfig) -> str:
-    """GCS URI for model artifacts bucket."""
-    return f"gs://{cfg.environment.gcs_bucket_artifacts}"
-
-
-def get_gcs_data_uri(cfg: DictConfig) -> str:
-    """GCS URI for data bucket."""
-    return f"gs://{cfg.environment.gcs_bucket_data}"
-
-
 def get_vertex_pipeline_root(cfg: DictConfig) -> str:
     """Vertex AI Pipeline root GCS path."""
-    return f"{get_gcs_artifacts_uri(cfg)}/pipeline-root"
+    return f"gs://{cfg.environment.gcs_bucket_artifacts}/pipeline-root"
 
 
 def get_artifact_registry_uri(cfg: DictConfig) -> str:

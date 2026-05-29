@@ -3,7 +3,6 @@
 # Production environment settings
 # Data source: BigQuery via GCS
 # =============================================================================
- 
 name: prd
 data_source: bigquery
  
