@@ -4,7 +4,15 @@
 # Usage: make <target>
 # =============================================================================
 
-.PHONY: help install install-dev install-api install-dashboard install-test install-lint
+.PHONY: help install install-dev install-api install-dashboard install-test install-lint \
+        docker-build-base docker-build-trainer docker-build docker-run docker-push-base docker-push-trainer
+
+# -----------------------------------------------------------------------------
+# CONFIGURATION
+# -----------------------------------------------------------------------------
+
+REGISTRY  := us-central1-docker.pkg.dev/cs-cdwp-data-dev2188/news-topic-classifier
+LOCAL_TAG := local
 
 # -----------------------------------------------------------------------------
 # DEFAULT
@@ -23,6 +31,18 @@ help:
 	@echo "  make install-dashboard Install base + dashboard (streamlit)"
 	@echo "  make install-test      Install base + test (pytest)"
 	@echo "  make install-lint      Install lint tools (ruff, mypy)"
+	@echo ""
+	@echo "  Docker (local)"
+	@echo "  --------------"
+	@echo "  make docker-build      Build base + trainer images locally"
+	@echo "  make docker-build-base Build base image only"
+	@echo "  make docker-build-trainer Build trainer image only"
+	@echo "  make docker-run        Run trainer container interactively"
+	@echo ""
+	@echo "  Docker (push to Artifact Registry)"
+	@echo "  -----------------------------------"
+	@echo "  make docker-push-base    Push base image to Artifact Registry"
+	@echo "  make docker-push-trainer Push trainer image to Artifact Registry"
 	@echo ""
 
 # -----------------------------------------------------------------------------
@@ -57,3 +77,36 @@ install-test:
 # Linting + formatting (no base needed)
 install-lint:
 	uv pip install -r requirements/lint.txt
+
+# -----------------------------------------------------------------------------
+# DOCKER — LOCAL (Docker Desktop)
+# -----------------------------------------------------------------------------
+
+# Build base image locally
+docker-build-base:
+	docker compose build base
+
+# Build trainer image locally (uses local base)
+docker-build-trainer:
+	docker compose build trainer
+
+# Build both images locally
+docker-build: docker-build-base docker-build-trainer
+
+# Run trainer container interactively (mounts GCP credentials)
+docker-run:
+	docker compose run --rm trainer bash
+
+# -----------------------------------------------------------------------------
+# DOCKER — PUSH TO ARTIFACT REGISTRY
+# -----------------------------------------------------------------------------
+
+# Tag and push base image to Artifact Registry
+docker-push-base: docker-build-base
+	docker tag news-topic-classifier/base:$(LOCAL_TAG) $(REGISTRY)/base:latest
+	docker push $(REGISTRY)/base:latest
+
+# Tag and push trainer image to Artifact Registry (uses remote base)
+docker-push-trainer: docker-build-trainer
+	docker tag news-topic-classifier/trainer:$(LOCAL_TAG) $(REGISTRY)/trainer:latest
+	docker push $(REGISTRY)/trainer:latest

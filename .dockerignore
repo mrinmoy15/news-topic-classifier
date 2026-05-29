@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.ruff_cache/
+.mypy_cache/
+
+# Data & models (large — fetched at runtime from GCS)
+data/
+models/
+reports/
+
+# Development artifacts
+notebooks/
+docs/
+tests/
+hydra_logs/
+mlflow.db
+mlruns/
+mlartifacts/
+
+# CI/CD & config
+.github/
+.git/
+*.md
+
+# Secrets
+.env
+*-service-account*.json
+*-sa-key*.json
+application_default_credentials.json
