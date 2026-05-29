@@ -3,8 +3,6 @@
 # Pre-production environment settings
 # Data source: BigQuery via GCS
 # =============================================================================
-  
-
 name: pp
 data_source: bigquery
  

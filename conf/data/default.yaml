@@ -19,6 +19,10 @@ gcs_processed_path: data/processed/
 # Pass via CLI override: data.raw_gcs_uri=gs://...
 raw_gcs_uri: null
 
+# GCS URI of the processed splits directory produced by features.py
+# Pass via CLI override: data.gcs_splits_dir=gs://bucket/data/processed/2026-05-27T14-30-00/
+gcs_splits_dir: null
+
 # Local paths (used when environment=local)
 local_raw_file: data/raw/sample.csv
 local_interim_path: data/interim/

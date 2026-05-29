@@ -3,8 +3,6 @@
 # Development environment settings
 # Data source: BigQuery via GCS
 # =============================================================================
- 
-
 name: dev
 data_source: bigquery
  

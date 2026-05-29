@@ -238,6 +238,12 @@ pipelines/compiled/
 # MLflow
 mlruns/
 mlartifacts/
+mlflow.db
+
+# Generated report outputs (figures, word docs, prediction parquets)
+reports/*.png
+reports/*.docx
+reports/*.parquet
 
 
 # INTERNAL SETUP SCRIPTS
