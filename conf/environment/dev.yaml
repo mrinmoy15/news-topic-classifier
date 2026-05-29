@@ -27,4 +27,4 @@ vertex_ai_sa: vertex-ai-sa@cs-cdwp-data-dev2188.iam.gserviceaccount.com
 
 # MLflow — GCS tracking for dev
 mlflow:
-  tracking_uri: gs://cs-cdwp-data-dev2188-model-artifacts/mlflow
+  tracking_uri: https://mlflow-tracking-server-eeh43tst7q-uc.a.run.app

@@ -1,13 +1,20 @@
-from __future__ import annotations
-
+import os
 from typing import NamedTuple
 
 from kfp import dsl
 
-
-@dsl.component(
-    base_image="us-central1-docker.pkg.dev/cs-cdwp-data-dev2188/news-topic-classifier/trainer:latest",
+_TRAINER_IMAGE = os.environ.get(
+    "TRAINER_IMAGE",
+    "us-central1-docker.pkg.dev/cs-cdwp-data-dev2188/news-topic-classifier/trainer:latest",
 )
+
+
+class TrainOutputs(NamedTuple):
+    gcs_model_uri: str
+    mlflow_run_id: str
+
+
+@dsl.component(base_image=_TRAINER_IMAGE)
 def train_component(
     gcp_project: str,
     gcs_bucket_artifacts: str,
@@ -23,7 +30,7 @@ def train_component(
     warmup_steps: int,
     weight_decay: float,
     early_stopping_patience: int,
-) -> NamedTuple("Outputs", [("gcs_model_uri", str), ("mlflow_run_id", str)]):
+) -> TrainOutputs:
     """
     KFP component — fine-tune BERT on the BBC News train/val splits.
 
@@ -153,5 +160,5 @@ def train_component(
         save_path="/tmp/bert-bbc-finetuned",
     )
 
-    Outputs = namedtuple("Outputs", ["gcs_model_uri", "mlflow_run_id"])
-    return Outputs(gcs_model_uri=gcs_model_uri, mlflow_run_id=mlflow_run_id)
+    TrainOutputs = namedtuple("TrainOutputs", ["gcs_model_uri", "mlflow_run_id"])
+    return TrainOutputs(gcs_model_uri=gcs_model_uri, mlflow_run_id=mlflow_run_id)

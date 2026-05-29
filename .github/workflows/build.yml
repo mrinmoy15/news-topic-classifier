@@ -1,0 +1,68 @@
+name: Build & Push to Dev
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "news_topic_classifier/**"
+      - "pipelines/**"
+      - "docker/**"
+      - "requirements/**"
+      - "conf/**"
+      - "pyproject.toml"
+      - "setup.cfg"
+
+env:
+  GCP_REGION: us-central1
+  GCP_PROJECT: cs-cdwp-data-dev2188
+  REGISTRY: us-central1-docker.pkg.dev/cs-cdwp-data-dev2188/news-topic-classifier
+
+jobs:
+  build-and-push:
+    name: Build & Push Trainer Image
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write  # required for Workload Identity Federation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build base image
+        run: |
+          docker build \
+            -f docker/base/Dockerfile \
+            -t ${{ env.REGISTRY }}/base:latest \
+            -t ${{ env.REGISTRY }}/base:${{ github.sha }} \
+            .
+
+      - name: Push base image
+        run: |
+          docker push ${{ env.REGISTRY }}/base:latest
+          docker push ${{ env.REGISTRY }}/base:${{ github.sha }}
+
+      - name: Build trainer image
+        run: |
+          docker build \
+            -f docker/trainer/Dockerfile \
+            --build-arg BASE_IMAGE=${{ env.REGISTRY }}/base:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/trainer:latest \
+            -t ${{ env.REGISTRY }}/trainer:${{ github.sha }} \
+            .
+
+      - name: Push trainer image
+        run: |
+          docker push ${{ env.REGISTRY }}/trainer:latest
+          docker push ${{ env.REGISTRY }}/trainer:${{ github.sha }}

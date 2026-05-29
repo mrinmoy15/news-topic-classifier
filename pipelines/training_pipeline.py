@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from kfp import compiler, dsl
 
 from pipelines.components.evaluate import evaluate_component
@@ -33,8 +31,6 @@ def training_pipeline(
     early_stopping_patience: int,
     val_split: float = 0.1,
     test_split: float = 0.1,
-    input_table_size: int = None,
-    sample_size: int = None,
 ) -> None:
     """
     End-to-end BBC News BERT training pipeline.
@@ -57,8 +53,6 @@ def training_pipeline(
         label_col=label_col,
         title_col=title_col,
         gcs_bucket_data=gcs_bucket_data,
-        input_table_size=input_table_size,
-        sample_size=sample_size,
     )
 
     # Step 2 — Preprocess

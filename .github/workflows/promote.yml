@@ -1,0 +1,58 @@
+name: Promote Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_env:
+        description: Source environment
+        required: true
+        type: choice
+        options: [dev, pp]
+      target_env:
+        description: Target environment
+        required: true
+        type: choice
+        options: [pp, prd]
+
+env:
+  GCP_REGION: us-central1
+  REPO: news-topic-classifier
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.source_env }} -> ${{ inputs.target_env }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Install gcrane
+        run: |
+          curl -sL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz \
+            | tar -xz gcrane
+          sudo mv gcrane /usr/local/bin/
+
+      - name: Set registry URIs
+        run: |
+          echo "SOURCE_REGISTRY=${{ env.GCP_REGION }}-docker.pkg.dev/cs-cdwp-data-${{ inputs.source_env }}2188/${{ env.REPO }}" >> $GITHUB_ENV
+          echo "TARGET_REGISTRY=${{ env.GCP_REGION }}-docker.pkg.dev/cs-cdwp-data-${{ inputs.target_env }}2188/${{ env.REPO }}" >> $GITHUB_ENV
+
+      - name: Promote base image
+        run: |
+          gcrane copy \
+            ${{ env.SOURCE_REGISTRY }}/base:latest \
+            ${{ env.TARGET_REGISTRY }}/base:latest
+
+      - name: Promote trainer image
+        run: |
+          gcrane copy \
+            ${{ env.SOURCE_REGISTRY }}/trainer:latest \
+            ${{ env.TARGET_REGISTRY }}/trainer:latest
