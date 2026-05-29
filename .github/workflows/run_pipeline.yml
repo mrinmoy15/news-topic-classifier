@@ -9,15 +9,23 @@ on:
         type: choice
         options: [dev, pp, prd]
         default: dev
+  workflow_run:
+    workflows: ["Build & Push to Dev"]
+    types: [completed]
+    branches: [develop]
 
 jobs:
   run-pipeline:
-    name: Submit pipeline to ${{ inputs.environment }}
+    name: Submit pipeline to ${{ inputs.environment || 'dev' }}
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 
     permissions:
       contents: read
       id-token: write
+
+    env:
+      TARGET_ENV: ${{ inputs.environment || 'dev' }}
 
     steps:
       - name: Checkout
@@ -39,4 +47,4 @@ jobs:
 
       - name: Compile & submit pipeline
         run: |
-          python pipelines/run_pipeline.py environment=${{ inputs.environment }}
+          python pipelines/run_pipeline.py environment=${{ env.TARGET_ENV }}
