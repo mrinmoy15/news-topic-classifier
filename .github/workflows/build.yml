@@ -33,13 +33,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Authenticate to GCP
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          token_format: access_token
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+        run: |
+          echo "${{ steps.auth.outputs.access_token }}" | docker login \
+            -u oauth2accesstoken \
+            --password-stdin \
+            ${{ env.GCP_REGION }}-docker.pkg.dev
 
       - name: Build base image
         run: |
