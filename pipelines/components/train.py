@@ -9,11 +9,6 @@ _TRAINER_IMAGE = os.environ.get(
 )
 
 
-class TrainOutputs(NamedTuple):
-    gcs_model_uri: str
-    mlflow_run_id: str
-
-
 @dsl.component(base_image=_TRAINER_IMAGE)
 def train_component(
     gcp_project: str,
@@ -30,7 +25,7 @@ def train_component(
     warmup_steps: int,
     weight_decay: float,
     early_stopping_patience: int,
-) -> TrainOutputs:
+) -> NamedTuple('TrainOutputs', [('gcs_model_uri', str), ('mlflow_run_id', str)]):  # type: ignore
     """
     KFP component — fine-tune BERT on the BBC News train/val splits.
 
@@ -148,8 +143,6 @@ def train_component(
     ).to(device)
 
     # Train
-    from collections import namedtuple
-
     _, gcs_model_uri, mlflow_run_id = train(
         cfg=cfg,
         model=model,
@@ -160,5 +153,6 @@ def train_component(
         save_path="/tmp/bert-bbc-finetuned",
     )
 
+    from collections import namedtuple
     TrainOutputs = namedtuple("TrainOutputs", ["gcs_model_uri", "mlflow_run_id"])
     return TrainOutputs(gcs_model_uri=gcs_model_uri, mlflow_run_id=mlflow_run_id)
