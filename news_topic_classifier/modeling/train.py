@@ -23,11 +23,19 @@ logger = logging.getLogger(__name__)
 def _setup_mlflow_tracking(tracking_uri: str) -> None:
     """Set MLflow tracking URI, fetching a GCP OIDC token for Cloud Run endpoints."""
     if ".run.app" in tracking_uri:
+        import time
         import google.auth.transport.requests
         import google.oauth2.id_token
         auth_req = google.auth.transport.requests.Request()
-        token = google.oauth2.id_token.fetch_id_token(auth_req, tracking_uri)
-        os.environ["MLFLOW_TRACKING_TOKEN"] = token
+        for attempt in range(4):
+            try:
+                token = google.oauth2.id_token.fetch_id_token(auth_req, tracking_uri)
+                os.environ["MLFLOW_TRACKING_TOKEN"] = token
+                break
+            except Exception:
+                if attempt == 3:
+                    raise
+                time.sleep(2 ** attempt)
     mlflow.set_tracking_uri(tracking_uri)
 
 
