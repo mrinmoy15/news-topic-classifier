@@ -81,7 +81,7 @@ def training_pipeline(
         warmup_steps=warmup_steps,
         weight_decay=weight_decay,
         early_stopping_patience=early_stopping_patience,
-    )
+    ).set_cpu_limit("8").set_memory_limit("32G")
 
     # Step 4 — Predict
     predict_task = predict_component(
