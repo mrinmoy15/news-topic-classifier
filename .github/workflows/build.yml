@@ -28,6 +28,9 @@ jobs:
       contents: read
       id-token: write  # required for Workload Identity Federation
 
+    env:
+      DOCKER_CONFIG: /tmp/docker-config  # isolated config, prevents gcloud helper auto-detection
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,12 +40,12 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
-          token_format: access_token
+          token_format: access_token  # no service_account — WIF principal has AR writer directly
 
       - name: Configure Docker for Artifact Registry
         run: |
-          echo '{}' > ~/.docker/config.json
+          mkdir -p $DOCKER_CONFIG
+          echo '{"credHelpers":{}}' > $DOCKER_CONFIG/config.json
           echo "${{ steps.auth.outputs.access_token }}" | \
             docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
 
