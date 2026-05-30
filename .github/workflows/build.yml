@@ -45,9 +45,8 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: |
           mkdir -p $DOCKER_CONFIG
-          echo '{"credHelpers":{}}' > $DOCKER_CONFIG/config.json
-          echo "${{ steps.auth.outputs.access_token }}" | \
-            docker login -u oauth2accesstoken --password-stdin us-central1-docker.pkg.dev
+          AUTH=$(printf "oauth2accesstoken:%s" "${{ steps.auth.outputs.access_token }}" | base64 -w 0)
+          printf '{"auths":{"us-central1-docker.pkg.dev":{"auth":"%s"}}}\n' "$AUTH" > $DOCKER_CONFIG/config.json
 
       - name: Build base image
         run: |
