@@ -21,21 +21,36 @@ logger = logging.getLogger(__name__)
 
 
 def _setup_mlflow_tracking(tracking_uri: str) -> None:
-    """Set MLflow tracking URI, fetching a GCP OIDC token for Cloud Run endpoints."""
+    """Set MLflow tracking URI with OIDC auth for Cloud Run endpoints."""
     if ".run.app" in tracking_uri:
-        import time
+        import urllib.request
+        import google.auth
         import google.auth.transport.requests
-        import google.oauth2.id_token
-        auth_req = google.auth.transport.requests.Request()
-        for attempt in range(4):
-            try:
-                token = google.oauth2.id_token.fetch_id_token(auth_req, tracking_uri)
-                os.environ["MLFLOW_TRACKING_TOKEN"] = token
-                break
-            except Exception:
-                if attempt == 3:
-                    raise
-                time.sleep(2 ** attempt)
+        import requests as _requests
+
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        credentials.refresh(google.auth.transport.requests.Request())
+
+        # Get attached service account email from metadata server
+        req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+            headers={"Metadata-Flavor": "Google"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            sa_email = r.read().decode().strip()
+
+        # Generate OIDC ID token via IAM Credentials API
+        resp = _requests.post(
+            f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{sa_email}:generateIdToken",
+            headers={"Authorization": f"Bearer {credentials.token}"},
+            json={"audience": tracking_uri, "includeEmail": True},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        os.environ["MLFLOW_TRACKING_TOKEN"] = resp.json()["token"]
+
     mlflow.set_tracking_uri(tracking_uri)
 
 
