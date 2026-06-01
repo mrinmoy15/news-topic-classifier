@@ -5,6 +5,7 @@
 # =============================================================================
 
 .PHONY: help install install-dev install-api install-dashboard install-test install-lint \
+        test test-cov \
         docker-build-base docker-build-trainer docker-build docker-run \
         docker-push-base docker-push-trainer \
         docker-test-extract docker-test-preprocess docker-test-train docker-test-predict docker-test-report docker-test-all
@@ -83,6 +84,16 @@ install-test:
 
 install-lint:
 	uv pip install -r requirements/lint.txt
+
+# -----------------------------------------------------------------------------
+# TESTING
+# -----------------------------------------------------------------------------
+
+test:
+	pytest tests/unit/ -v
+
+test-cov:
+	pytest tests/unit/ --cov=news_topic_classifier --cov-report=term-missing
 
 # -----------------------------------------------------------------------------
 # DOCKER — BUILD (local Docker Desktop)
