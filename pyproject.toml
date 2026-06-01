@@ -88,6 +88,15 @@ python_files     = ["test_*.py"]
 python_classes   = ["Test*"]
 python_functions = ["test_*"]
 addopts          = "-v --cov=news_topic_classifier --cov-report=term-missing"
+filterwarnings = [
+    # matplotlib uses deprecated pyparsing API internally; nothing we can fix.
+    "ignore::DeprecationWarning:matplotlib",
+    "ignore::DeprecationWarning:pyparsing",
+]
+markers = [
+    "integration: requires real GCP credentials (set INTEGRATION_TESTS=true)",
+    "slow: long-running tests (BERT training loop, ~20 min)",
+]
 
 # -----------------------------------------------------------------------------
 # TOOL — COVERAGE

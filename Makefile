@@ -5,7 +5,7 @@
 # =============================================================================
 
 .PHONY: help install install-dev install-api install-dashboard install-test install-lint \
-        test test-cov \
+        test test-cov integration-test integration-test-full \
         docker-build-base docker-build-trainer docker-build docker-run \
         docker-push-base docker-push-trainer \
         docker-test-extract docker-test-preprocess docker-test-train docker-test-predict docker-test-report docker-test-all
@@ -94,6 +94,16 @@ test:
 
 test-cov:
 	pytest tests/unit/ --cov=news_topic_classifier --cov-report=term-missing
+
+# Requires GCP credentials (ADC or WIF).
+# Set INTEGRATION_TESTS=true before calling:
+#   PowerShell : $env:INTEGRATION_TESTS="true"; make integration-test
+#   bash/Linux : INTEGRATION_TESTS=true make integration-test
+integration-test:
+	pytest tests/integration/ -m "integration and not slow" -v --no-cov
+
+integration-test-full:
+	pytest tests/integration/ -m integration -v --no-cov
 
 # -----------------------------------------------------------------------------
 # DOCKER — BUILD (local Docker Desktop)
