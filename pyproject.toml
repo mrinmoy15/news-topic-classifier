@@ -101,3 +101,7 @@ omit   = ["tests/*", "notebooks/*"]
 show_missing = true
 skip_covered = false
 fail_under   = 80
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
