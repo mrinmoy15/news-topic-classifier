@@ -152,20 +152,30 @@ def compute_metrics(
         The report dict has per-class and macro/weighted averages,
         ready for per-class MLflow logging.
     """
-    target_names = [id2label[i] for i in sorted(id2label)]
+    all_label_ids = sorted(id2label)
+    target_names  = [id2label[i] for i in all_label_ids]
 
     acc    = accuracy_score(labels, preds)
+    # Pass labels= so sklearn always reports all 5 classes even when
+    # the sample doesn't contain every class (e.g. small test splits).
     report = classification_report(
         labels,
         preds,
+        labels=all_label_ids,
         target_names=target_names,
         output_dict=True,
+        zero_division=0,
     )
 
     logger.info("accuracy: %.4f", acc)
     logger.info(
         "\n%s",
-        classification_report(labels, preds, target_names=target_names),
+        classification_report(
+            labels, preds,
+            labels=all_label_ids,
+            target_names=target_names,
+            zero_division=0,
+        ),
     )
 
     return {"accuracy": acc, "report": report}

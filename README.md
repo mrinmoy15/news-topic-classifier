@@ -204,9 +204,11 @@ The pipeline is compiled to `pipelines/compiled/training_pipeline.yaml` before s
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
+| `test.yml` | PR to `develop`/`main`, push to `develop` | Run unit test suite (no GCP) |
 | `build.yml` | Push to `develop` | Build and push `base` + `trainer` images to Artifact Registry |
 | `run_pipeline.yml` | After `build.yml` succeeds, or manual | Submit Vertex AI training pipeline |
 | `promote.yml` | Manual | Promote Docker images dev → pp → prd |
+| `integration_test.yml` | Push to `main`, or manual | Run integration tests against dev GCP environment |
 
 Authentication uses [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) — no long-lived service account keys are stored in GitHub secrets.
 
@@ -242,7 +244,34 @@ make test-cov
 pytest tests/unit/test_dataset.py -v
 ```
 
-Tests are split into `tests/unit/` (fast, no GCP) and `tests/integration/` (requires GCP credentials).
+Tests are split into `tests/unit/` (fast, no GCP) and `tests/integration/` (requires real GCP credentials).
+
+### Integration tests
+
+Integration tests hit real GCP services (BigQuery, GCS, MLflow) in the dev environment. They are **skipped automatically** unless `INTEGRATION_TESTS=true` is set.
+
+**PowerShell (Windows):**
+```powershell
+$env:INTEGRATION_TESTS = "true"
+make integration-test        # Tier 1 — data pipeline only (~3 min)
+make integration-test-full   # Tier 2 — full pipeline including training (~25 min)
+```
+
+**bash / Linux / macOS:**
+```bash
+INTEGRATION_TESTS=true make integration-test
+INTEGRATION_TESTS=true make integration-test-full
+```
+
+| Test | Tier | What it does |
+|------|------|-------------|
+| `test_01_extract` | 1 | Pull 50 rows from BigQuery → GCS Parquet |
+| `test_02_preprocess` | 1 | Clean + stratified split → 3 GCS Parquet files |
+| `test_03_train` | 2 (`slow`) | Download splits → 1-epoch BERT fine-tune → GCS model |
+| `test_04_predict` | 2 (`slow`) | Load model → test-set inference → GCS predictions |
+| `test_05_report` | 2 (`slow`) | MLflow data + predictions → plots + Word doc on GCS |
+
+Tests share state via a module-scoped `pipeline_artifacts` dict so each step feeds the next. All GCS objects are written under a timestamped `integration-tests/<timestamp>/` prefix and **cleaned up automatically** after the session.
 
 ### CI trigger
 
