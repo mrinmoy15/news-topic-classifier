@@ -27,7 +27,7 @@ jobs:
   integration-tests:
     name: Integration Tests (${{ github.event.inputs.tier || 'data-pipeline' }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     permissions:
       contents: read
@@ -53,7 +53,7 @@ jobs:
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Run data-pipeline integration tests
-        if: ${{ github.event.inputs.tier == 'data-pipeline' || github.event.inputs.tier == '' }}
+        if: ${{ github.event.inputs.tier == 'data-pipeline' || github.event_name == 'push' }}
         env:
           INTEGRATION_TESTS: "true"
           MLFLOW_TRACKING_URI: "https://mlflow-tracking-server-eeh43tst7q-uc.a.run.app"
