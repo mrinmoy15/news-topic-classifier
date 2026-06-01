@@ -200,6 +200,36 @@ The pipeline is compiled to `pipelines/compiled/training_pipeline.yaml` before s
 
 ---
 
+## Registering a Model to Vertex AI Model Registry
+
+After a successful training pipeline run, push the fine-tuned model from GCS to Vertex AI Model Registry for versioning and deployment:
+
+```bash
+# Register the default model path for dev
+make register-model ENV=dev
+
+# Register a specific GCS URI
+python scripts/register_model.py --environment dev \
+    --gcs-model-uri gs://cs-cdwp-data-dev2188-model-artifacts/models/bert-bbc-finetuned/
+
+# Pin a custom display name and version note
+python scripts/register_model.py --environment dev \
+    --display-name "bert-bbc-v2" \
+    --version-description "Trained 2026-06-01, val_acc=0.97"
+```
+
+Each call creates a new **version** of the same `display-name` model resource — Vertex AI handles version history automatically.
+
+| Argument | Default | Notes |
+|----------|---------|-------|
+| `--environment` | `dev` | `dev`, `pp`, or `prd` |
+| `--gcs-model-uri` | `gs://<bucket>/models/bert-bbc-finetuned/` | Inferred from environment if omitted |
+| `--display-name` | `bert-bbc-news-classifier` | Model name in Registry |
+| `--version-description` | Timestamped string | Free-text note for this version |
+| `--serving-container-uri` | Pre-built Vertex AI PyTorch CPU container | Override with custom API image |
+
+---
+
 ## CI/CD (GitHub Actions)
 
 | Workflow | Trigger | Description |
