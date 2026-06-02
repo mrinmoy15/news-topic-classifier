@@ -1,31 +1,27 @@
 name: Promote Image
 
+# Manually triggered from the main branch only.
+# Copies the validated dev images to prd Artifact Registry, then
+# automatically dispatches the training pipeline against prd resources.
 on:
   workflow_dispatch:
-    inputs:
-      source_env:
-        description: Source environment
-        required: true
-        type: choice
-        options: [dev, pp]
-      target_env:
-        description: Target environment
-        required: true
-        type: choice
-        options: [pp, prd]
 
 env:
   GCP_REGION: us-central1
   REPO: news-topic-classifier
+  SOURCE_PROJECT: cs-cdwp-data-dev2188
+  TARGET_PROJECT: cs-cdwp-data-prd2188
 
 jobs:
   promote:
-    name: Promote ${{ inputs.source_env }} -> ${{ inputs.target_env }}
+    name: Promote dev -> prd
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
 
     permissions:
       contents: read
       id-token: write
+      actions: write  # required to dispatch run_pipeline.yml
 
     steps:
       - name: Authenticate to GCP
@@ -40,19 +36,22 @@ jobs:
             | tar -xz gcrane
           sudo mv gcrane /usr/local/bin/
 
-      - name: Set registry URIs
-        run: |
-          echo "SOURCE_REGISTRY=${{ env.GCP_REGION }}-docker.pkg.dev/cs-cdwp-data-${{ inputs.source_env }}2188/${{ env.REPO }}" >> $GITHUB_ENV
-          echo "TARGET_REGISTRY=${{ env.GCP_REGION }}-docker.pkg.dev/cs-cdwp-data-${{ inputs.target_env }}2188/${{ env.REPO }}" >> $GITHUB_ENV
-
       - name: Promote base image
         run: |
           gcrane copy \
-            ${{ env.SOURCE_REGISTRY }}/base:latest \
-            ${{ env.TARGET_REGISTRY }}/base:latest
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/base:latest \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/base:latest
 
       - name: Promote trainer image
         run: |
           gcrane copy \
-            ${{ env.SOURCE_REGISTRY }}/trainer:latest \
-            ${{ env.TARGET_REGISTRY }}/trainer:latest
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/trainer:latest \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/trainer:latest
+
+      - name: Trigger prd training pipeline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run run_pipeline.yml \
+            --ref main \
+            --field environment=prd

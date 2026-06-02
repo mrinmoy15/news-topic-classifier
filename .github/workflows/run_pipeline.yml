@@ -7,7 +7,7 @@ on:
         description: Target environment
         required: true
         type: choice
-        options: [dev, pp, prd]
+        options: [dev, prd]
         default: dev
   workflow_run:
     workflows: ["Build & Push to Dev"]

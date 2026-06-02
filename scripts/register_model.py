@@ -19,8 +19,8 @@ Notes
 -----
 - Requires GCP credentials: `gcloud auth application-default login`
 - The model artifact must be at the GCS URI before calling this script.
-- A pre-built Vertex AI PyTorch CPU serving container is used by default.
-  Override with --serving-container-uri when you have a custom API image.
+- The environment's trainer image is used as the serving container by default.
+  Override with --serving-container-uri when a dedicated API image is available.
 - Each call creates a new *version* of the same display-name model resource
   in Model Registry (Vertex AI handles versioning automatically).
 """
@@ -41,24 +41,21 @@ _ENV_CONFIG = {
         "project":          "cs-cdwp-data-dev2188",
         "region":           "us-central1",
         "artifacts_bucket": "cs-cdwp-data-dev2188-model-artifacts",
+        "trainer_image":    "us-central1-docker.pkg.dev/cs-cdwp-data-dev2188/news-topic-classifier/trainer:latest",
     },
     "pp": {
         "project":          "cs-cdwp-data-pp2188",
         "region":           "us-central1",
         "artifacts_bucket": "cs-cdwp-data-pp2188-model-artifacts",
+        "trainer_image":    "us-central1-docker.pkg.dev/cs-cdwp-data-pp2188/news-topic-classifier/trainer:latest",
     },
     "prd": {
         "project":          "cs-cdwp-data-prd2188",
         "region":           "us-central1",
         "artifacts_bucket": "cs-cdwp-data-prd2188-model-artifacts",
+        "trainer_image":    "us-central1-docker.pkg.dev/cs-cdwp-data-prd2188/news-topic-classifier/trainer:latest",
     },
 }
-
-# Pre-built Vertex AI serving container for PyTorch CPU inference.
-# Swap this for a custom API image once api/Dockerfile is ready.
-_DEFAULT_SERVING_CONTAINER = (
-    "us-docker.pkg.dev/vertex-ai/prediction/pytorch-cpu.2-2:latest"
-)
 
 # Health-check and prediction route expected by Vertex AI online prediction.
 _HEALTH_ROUTE   = "/health"
@@ -75,7 +72,7 @@ def register_model(
     gcs_model_uri: str | None,
     display_name: str,
     version_description: str,
-    serving_container_uri: str,
+    serving_container_uri: str | None = None,
 ) -> aiplatform.Model:
     """Upload the fine-tuned model artifact to Vertex AI Model Registry."""
 
@@ -85,6 +82,9 @@ def register_model(
         gcs_model_uri = (
             f"gs://{cfg['artifacts_bucket']}/models/bert-bbc-finetuned/"
         )
+
+    if serving_container_uri is None:
+        serving_container_uri = cfg["trainer_image"]
 
     print(f"\nRegistering model to Vertex AI Model Registry")
     print(f"  Environment  : {environment}")
@@ -172,10 +172,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--serving-container-uri",
-        default=_DEFAULT_SERVING_CONTAINER,
+        default=None,
         help=(
-            "Serving container image URI "
-            f"(default: {_DEFAULT_SERVING_CONTAINER})"
+            "Serving container image URI. "
+            "Defaults to the environment's trainer image from _ENV_CONFIG."
         ),
     )
 

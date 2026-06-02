@@ -216,6 +216,14 @@ def test_script_uses_explicit_gcs_uri_when_provided():
     assert mock_aip.Model.upload.call_args.kwargs["artifact_uri"] == explicit
 
 
+def test_script_defaults_to_trainer_image_when_no_container_given():
+    mock_aip = _mock_script_aiplatform()
+    with patch("scripts.register_model.aiplatform", mock_aip):
+        register_model("dev", None, "bert-bbc-news-classifier", "v1", None)
+    used = mock_aip.Model.upload.call_args.kwargs["serving_container_image_uri"]
+    assert used == _ENV_CONFIG["dev"]["trainer_image"]
+
+
 def test_script_returns_model_object():
     mock_aip = _mock_script_aiplatform()
     with patch("scripts.register_model.aiplatform", mock_aip):
@@ -229,6 +237,8 @@ def test_script_all_envs_have_config():
         assert "project" in cfg
         assert "region" in cfg
         assert "artifacts_bucket" in cfg
+        assert "trainer_image" in cfg
+        assert cfg["trainer_image"].startswith("us-central1-docker.pkg.dev/")
 
 
 # ─── script: CLI argument parsing ────────────────────────────────────────────
