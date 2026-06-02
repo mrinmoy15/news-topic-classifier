@@ -271,3 +271,53 @@ def test_05_report(cfg, test_run_prefix, pipeline_artifacts):
     print(f"\n[report] {len(blobs)} artefacts → {gcs_output_dir}")
     for f in sorted(filenames):
         print(f"         {f}")
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_06_register_model(cfg, pipeline_artifacts):
+    """Register the fine-tuned model via the KFP component's Python function."""
+    if "gcs_model_uri" not in pipeline_artifacts:
+        pytest.skip("test_03_train did not complete — skipping")
+
+    from google.cloud import aiplatform
+    from pipelines.components.register_model import register_model_component
+
+    _fn = register_model_component.python_func
+
+    # Use our custom trainer image instead of the pre-built PyTorch container.
+    # Vertex AI validates artifact format only for pre-built containers; the
+    # PyTorch one requires TorchServe .mar files which our HuggingFace model
+    # artifacts don't satisfy. A custom image bypasses that check so we can
+    # verify the registration call end-to-end. The proper serving container
+    # will be wired in once api/Dockerfile is built and pushed.
+    trainer_image = (
+        f"us-central1-docker.pkg.dev/{cfg.environment.gcp_project}"
+        f"/{cfg.environment.artifact_registry_repo}/trainer:latest"
+    )
+
+    resource_name = _fn(
+        gcp_project=cfg.environment.gcp_project,
+        gcp_region=cfg.environment.gcp_region,
+        gcs_model_uri=pipeline_artifacts["gcs_model_uri"],
+        environment_name=cfg.environment.name,
+        display_name="bert-bbc-news-classifier-integration-test",
+        serving_container_uri=trainer_image,
+    )
+
+    assert resource_name.startswith("projects/")
+    assert "/models/" in resource_name
+
+    pipeline_artifacts["model_resource_name"] = resource_name
+    print(f"\n[register] resource_name={resource_name}")
+
+    # Clean up: delete this test version to avoid accumulating stale entries.
+    try:
+        aiplatform.init(
+            project=cfg.environment.gcp_project,
+            location=cfg.environment.gcp_region,
+        )
+        aiplatform.Model(resource_name).delete()
+        print("[register] Model version deleted after test.")
+    except Exception as e:
+        print(f"[register] Warning: could not delete model version: {e}")

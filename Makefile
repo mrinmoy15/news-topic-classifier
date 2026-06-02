@@ -100,9 +100,6 @@ test-cov:
 # Set INTEGRATION_TESTS=true before calling:
 #   PowerShell : $env:INTEGRATION_TESTS="true"; make integration-test
 #   bash/Linux : INTEGRATION_TESTS=true make integration-test
-register-model:
-	python scripts/register_model.py --environment $(ENV)
-
 # ---------------------------------------------------------------------------
 # INTEGRATION TESTS
 # ---------------------------------------------------------------------------
