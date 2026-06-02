@@ -15,9 +15,7 @@ def register_model_component(
     gcs_model_uri: str,
     environment_name: str,
     display_name: str = "bert-bbc-news-classifier",
-    serving_container_uri: str = (
-        "us-docker.pkg.dev/vertex-ai/prediction/pytorch-cpu.2-2:latest"
-    ),
+    serving_container_uri: str = _TRAINER_IMAGE,
 ) -> str:
     """
     KFP component — register the fine-tuned model to Vertex AI Model Registry.
@@ -39,9 +37,9 @@ def register_model_component(
         Display name in Model Registry. Each pipeline run creates a new
         version under this name; Vertex AI manages version history.
     serving_container_uri : str
-        Docker image URI for online prediction. Defaults to the pre-built
-        Vertex AI PyTorch CPU container. Override with a custom API image
-        once api/Dockerfile is built and pushed.
+        Docker image URI for online prediction. Defaults to the trainer image
+        (environment-specific, set by TRAINER_IMAGE env var at compile time).
+        Override with a dedicated serving image once api/Dockerfile is built.
 
     Returns
     -------
