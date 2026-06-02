@@ -56,6 +56,7 @@ def _compile(cfg: DictConfig) -> None:
 def _build_parameter_values(cfg: DictConfig) -> dict:
     return {
         "gcp_project":             cfg.environment.gcp_project,
+        "gcp_region":              cfg.environment.gcp_region,
         "gcs_bucket_data":         cfg.environment.gcs_bucket_data,
         "gcs_bucket_artifacts":    cfg.environment.gcs_bucket_artifacts,
         "bq_dataset":              cfg.environment.bq_dataset,

@@ -6,6 +6,7 @@
 
 .PHONY: help install install-dev install-api install-dashboard install-test install-lint \
         test test-cov integration-test integration-test-full \
+        register-model \
         docker-build-base docker-build-trainer docker-build docker-run \
         docker-push-base docker-push-trainer \
         docker-test-extract docker-test-preprocess docker-test-train docker-test-predict docker-test-report docker-test-all
@@ -99,6 +100,10 @@ test-cov:
 # Set INTEGRATION_TESTS=true before calling:
 #   PowerShell : $env:INTEGRATION_TESTS="true"; make integration-test
 #   bash/Linux : INTEGRATION_TESTS=true make integration-test
+# ---------------------------------------------------------------------------
+# INTEGRATION TESTS
+# ---------------------------------------------------------------------------
+
 integration-test:
 	pytest tests/integration/ -m "integration and not slow" -v --no-cov
 

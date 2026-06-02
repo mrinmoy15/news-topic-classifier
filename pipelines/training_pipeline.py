@@ -4,12 +4,14 @@ from pipelines.components.evaluate import evaluate_component
 from pipelines.components.extract import extract_component
 from pipelines.components.preprocess import preprocess_component
 from pipelines.components.predict import predict_component
+from pipelines.components.register_model import register_model_component
 from pipelines.components.train import train_component
 
 
 @dsl.pipeline(name="bbc-news-training-pipeline")
 def training_pipeline(
     gcp_project: str,
+    gcp_region: str,
     gcs_bucket_data: str,
     gcs_bucket_artifacts: str,
     bq_dataset: str,
@@ -37,11 +39,12 @@ def training_pipeline(
 
     Steps
     -----
-    1. extract    — BQ -> GCS raw Parquet
-    2. preprocess — GCS raw -> GCS train/val/test splits
-    3. train      — fine-tune BERT, upload model to GCS
-    4. predict    — run inference on test split, save predictions to GCS
-    5. evaluate   — generate plots + Word report, upload to GCS
+    1. extract        — BQ -> GCS raw Parquet
+    2. preprocess     — GCS raw -> GCS train/val/test splits
+    3. train          — fine-tune BERT, upload model to GCS
+    4. predict        — run inference on test split, save predictions to GCS
+    5. evaluate       — generate plots + Word report, upload to GCS
+    6. register_model — register fine-tuned model to Vertex AI Model Registry
     """
 
     # Step 1 — Extract 
@@ -96,7 +99,7 @@ def training_pipeline(
     )
 
     # Step 5 — Evaluate
-    evaluate_component(
+    evaluate_task = evaluate_component(
         gcp_project=gcp_project,
         gcs_bucket_artifacts=gcs_bucket_artifacts,
         gcs_predictions_uri=predict_task.output,
@@ -114,6 +117,16 @@ def training_pipeline(
         weight_decay=weight_decay,
         early_stopping_patience=early_stopping_patience,
     )
+
+    # Step 6 — Register model to Vertex AI Model Registry
+    # Runs after evaluate so the model is only registered once the full
+    # pipeline (training + evaluation) has completed successfully.
+    register_model_component(
+        gcp_project=gcp_project,
+        gcp_region=gcp_region,
+        gcs_model_uri=train_task.outputs["gcs_model_uri"],
+        environment_name=environment_name,
+    ).after(evaluate_task)
 
 
 if __name__ == "__main__":
