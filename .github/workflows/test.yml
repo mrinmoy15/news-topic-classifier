@@ -1,0 +1,45 @@
+name: Unit Tests
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+    paths:
+      - "news_topic_classifier/**"
+      - "tests/unit/**"
+      - "tests/conftest.py"
+      - "requirements/**"
+      - "pyproject.toml"
+      - "setup.cfg"
+
+jobs:
+  unit-tests:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e . -r requirements/base.txt -r requirements/test.txt
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --cov=news_topic_classifier --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml

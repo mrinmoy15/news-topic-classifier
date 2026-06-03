@@ -1,0 +1,33 @@
+# =============================================================================
+# conf/data/default.yaml
+# Data pipeline configuration
+# =============================================================================
+ 
+
+# BigQuery source
+bq_source_table: bigquery-public-data.bbc_news.fulltext
+bq_text_column: body
+bq_label_column: category
+bq_title_column: title
+ 
+# GCS paths (relative to bucket root)
+gcs_raw_path: data/raw/
+gcs_interim_path: data/interim/
+gcs_processed_path: data/processed/
+
+# GCS URI of the raw Parquet produced by dataset.py
+# Pass via CLI override: data.raw_gcs_uri=gs://...
+raw_gcs_uri: null
+
+# GCS URI of the processed splits directory produced by features.py
+# Pass via CLI override: data.gcs_splits_dir=gs://bucket/data/processed/2026-05-27T14-30-00/
+gcs_splits_dir: null
+
+# Local paths (used when environment=local)
+local_raw_file: data/raw/sample.csv
+local_interim_path: data/interim/
+local_processed_path: data/processed/
+ 
+# Processing
+sample_size: null                
+file_format: parquet

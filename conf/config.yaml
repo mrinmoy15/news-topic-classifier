@@ -1,0 +1,31 @@
+# =============================================================================
+# conf/config.yaml
+# Main Hydra configuration entry point
+# Composes environment + model + training + data configs
+# =============================================================================
+
+defaults:
+  - environment: dev
+  - model: default
+  - training: default
+  - data: default
+  - _self_
+
+
+# =============================================================================
+# PROJECT
+# =============================================================================
+
+project:
+  name: news-topic-classifier
+  version: "0.1.0"
+
+
+# =============================================================================
+# logs
+# =============================================================================
+hydra:
+  run:
+    dir: hydra_logs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: hydra_logs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}

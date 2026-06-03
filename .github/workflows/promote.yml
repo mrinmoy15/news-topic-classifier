@@ -1,0 +1,57 @@
+name: Promote Image
+
+# Manually triggered from the main branch only.
+# Copies the validated dev images to prd Artifact Registry, then
+# automatically dispatches the training pipeline against prd resources.
+on:
+  workflow_dispatch:
+
+env:
+  GCP_REGION: us-central1
+  REPO: news-topic-classifier
+  SOURCE_PROJECT: cs-cdwp-data-dev2188
+  TARGET_PROJECT: cs-cdwp-data-prd2188
+
+jobs:
+  promote:
+    name: Promote dev -> prd
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: read
+      id-token: write
+      actions: write  # required to dispatch run_pipeline.yml
+
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Install gcrane
+        run: |
+          curl -sL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz \
+            | tar -xz gcrane
+          sudo mv gcrane /usr/local/bin/
+
+      - name: Promote base image
+        run: |
+          gcrane copy \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/base:latest \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/base:latest
+
+      - name: Promote trainer image
+        run: |
+          gcrane copy \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/trainer:latest \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/trainer:latest
+
+      - name: Trigger prd training pipeline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run run_pipeline.yml \
+            --ref main \
+            --field environment=prd

@@ -1,0 +1,30 @@
+# =============================================================================
+# conf/environment/prd.yaml
+# Production environment settings
+# Data source: BigQuery via GCS
+# =============================================================================
+name: prd
+data_source: bigquery
+ 
+# GCP
+gcp_project: cs-cdwp-data-prd2188
+gcp_region: us-central1
+ 
+# BigQuery
+bq_dataset: DATA_SCNCE_DATA
+bq_source_table: bigquery-public-data.bbc_news.fulltext
+bq_results_table: news_topic_classifier_results
+ 
+# Cloud Storage
+gcs_bucket_artifacts: cs-cdwp-data-prd2188-model-artifacts
+gcs_bucket_data: cs-cdwp-data-prd2188-model-data
+ 
+# Artifact Registry
+artifact_registry_repo: news-topic-classifier
+ 
+# Vertex AI
+vertex_ai_sa: vertex-ai-sa@cs-cdwp-data-prd2188.iam.gserviceaccount.com
+ 
+# MLflow — GCS tracking for prd
+mlflow:
+  tracking_uri: https://mlflow-tracking-server-wngg5g6m6q-uc.a.run.app

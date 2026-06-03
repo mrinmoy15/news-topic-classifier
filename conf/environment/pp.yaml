@@ -1,0 +1,30 @@
+# =============================================================================
+# conf/environment/pp.yaml
+# Pre-production environment settings
+# Data source: BigQuery via GCS
+# =============================================================================
+name: pp
+data_source: bigquery
+ 
+# GCP
+gcp_project: cs-cdwp-data-pp2188
+gcp_region: us-central1
+ 
+# BigQuery
+bq_dataset: DATA_SCNCE_DEV_DATA
+bq_source_table: bigquery-public-data.bbc_news.fulltext
+bq_results_table: news_topic_classifier_results
+ 
+# Cloud Storage
+gcs_bucket_artifacts: cs-cdwp-data-pp2188-model-artifacts
+gcs_bucket_data: cs-cdwp-data-pp2188-model-data 
+  
+# Artifact Registry
+artifact_registry_repo: news-topic-classifier
+ 
+# Vertex AI
+vertex_ai_sa: vertex-ai-sa@cs-cdwp-data-pp2188.iam.gserviceaccount.com
+ 
+# MLflow — GCS tracking for pp
+mlflow:
+  tracking_uri: https://mlflow-tracking-server-nityigrfzq-uc.a.run.app

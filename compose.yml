@@ -1,0 +1,91 @@
+# =============================================================================
+# compose.yml
+# Local development services
+#
+# Usage
+# -----
+# Start all services:
+#   docker compose up
+#
+# Start a specific service:
+#   docker compose up mlflow
+#   docker compose up dashboard
+#
+# Run trainer interactively:
+#   docker compose run --rm trainer bash
+# =============================================================================
+
+x-gcp-credentials: &gcp-credentials
+  volumes:
+    - ${GCLOUD_CONFIG_DIR}:/root/.config/gcloud:ro
+  environment:
+    GOOGLE_APPLICATION_CREDENTIALS: /root/.config/gcloud/application_default_credentials.json
+    GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT:-cs-cdwp-data-dev2188}
+    CLOUD_ML_PROJECT_ID: ${GOOGLE_CLOUD_PROJECT:-cs-cdwp-data-dev2188}
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # MLflow UI — experiment tracking dashboard
+  # http://localhost:5000
+  # ---------------------------------------------------------------------------
+  mlflow:
+    image: python:3.11-slim
+    command: >
+      bash -c "pip install mlflow -q &&
+               mlflow ui
+               --backend-store-uri sqlite:////mlflow/mlflow.db
+               --host 0.0.0.0
+               --port 5000"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlflow.db:/mlflow/mlflow.db
+
+  # ---------------------------------------------------------------------------
+  # Base image — shared dependencies layer
+  # docker compose build base
+  # ---------------------------------------------------------------------------
+  base:
+    build:
+      context: .
+      dockerfile: docker/base/Dockerfile
+    image: news-topic-classifier/base:local
+    profiles:
+      - build
+
+  # ---------------------------------------------------------------------------
+  # Trainer — run pipeline components or smoke tests inside the container
+  # docker compose build trainer
+  # docker compose run --rm trainer bash
+  # ---------------------------------------------------------------------------
+  trainer:
+    build:
+      context: .
+      dockerfile: docker/trainer/Dockerfile
+      args:
+        BASE_IMAGE: news-topic-classifier/base:local
+    image: news-topic-classifier/trainer:local
+    <<: *gcp-credentials
+    working_dir: /app
+    stdin_open: true
+    tty: true
+
+  # ---------------------------------------------------------------------------
+  # Dashboard — monitoring UI (Streamlit)
+  # http://localhost:8501
+  # Built from dashboard/Dockerfile — populated in a future branch
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    <<: *gcp-credentials
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./dashboard:/app/dashboard
+    depends_on:
+      - mlflow
+    profiles:
+      - dashboard
