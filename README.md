@@ -12,16 +12,16 @@ Built on Google Cloud Platform with Vertex AI pipelines, MLflow experiment track
 BigQuery (BBC News)
        │
        ▼
-┌─────────────────────────────────────────────────────┐
-│              Vertex AI Training Pipeline            │
-│                                                     │
-│  Extract ──► Preprocess ──► Train ──► Predict ──► Report │
-│   (BQ)        (Parquet)    (BERT)   (Inference)  (Metrics) │
-└─────────────────────────────────────────────────────┘
-       │                        │
-       ▼                        ▼
-  GCS Buckets             MLflow Tracking
-  (data + models)         (Cloud Run)
+┌──────────────────────────────────────────────────────────────────┐
+│                   Vertex AI Training Pipeline                    │
+│                                                                  │
+│  Extract ──► Preprocess ──► Train ──► Predict ──► Evaluate ──► Register │
+│   (BQ)        (Parquet)    (BERT)   (Inference) (Metrics)   (Model Registry) │
+└──────────────────────────────────────────────────────────────────┘
+       │                        │                        │
+       ▼                        ▼                        ▼
+  GCS Buckets             MLflow Tracking        Vertex AI Model Registry
+  (data + models)         (Cloud Run)            (versioned model artifacts)
        │
        ▼
    FastAPI (inference) + Streamlit (dashboard)
@@ -29,7 +29,7 @@ BigQuery (BBC News)
 
 ![Vertex AI Pipeline DAG](docs/images/pipeline_dag.png)
 
-**Five-step Kubeflow Pipelines v2 workflow:**
+**Six-step Kubeflow Pipelines v2 workflow:**
 
 | Step | Component | Description |
 |------|-----------|-------------|
@@ -38,6 +38,7 @@ BigQuery (BBC News)
 | 3 | `train.py` | Fine-tune `bert-base-uncased` with AdamW |
 | 4 | `predict.py` | Run inference on held-out test set |
 | 5 | `evaluate.py` | Generate classification report |
+| 6 | `register_model.py` | Register fine-tuned model to Vertex AI Model Registry |
 
 ---
 
@@ -226,7 +227,7 @@ Each call creates a new **version** of the same `display-name` model resource �
 | `--gcs-model-uri` | `gs://<bucket>/models/bert-bbc-finetuned/` | Inferred from environment if omitted |
 | `--display-name` | `bert-bbc-news-classifier` | Model name in Registry |
 | `--version-description` | Timestamped string | Free-text note for this version |
-| `--serving-container-uri` | Pre-built Vertex AI PyTorch CPU container | Override with custom API image |
+| `--serving-container-uri` | Environment's trainer image from `_ENV_CONFIG` | Override with dedicated serving image when available |
 
 ---
 
@@ -237,7 +238,7 @@ Each call creates a new **version** of the same `display-name` model resource �
 | `test.yml` | PR to `develop`/`main`, push to `develop` | Run unit test suite (no GCP) |
 | `build.yml` | Push to `develop` | Build and push `base` + `trainer` images to Artifact Registry |
 | `run_pipeline.yml` | After `build.yml` succeeds, or manual | Submit Vertex AI training pipeline |
-| `promote.yml` | Manual | Promote Docker images dev → pp → prd |
+| `promote.yml` | Manual (main branch only) | Promote Docker images dev → prd, then auto-trigger prd pipeline |
 | `integration_test.yml` | Push to `main`, or manual | Run integration tests against dev GCP environment |
 
 Authentication uses [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) — no long-lived service account keys are stored in GitHub secrets.
@@ -300,6 +301,7 @@ INTEGRATION_TESTS=true make integration-test-full
 | `test_03_train` | 2 (`slow`) | Download splits → 1-epoch BERT fine-tune → GCS model |
 | `test_04_predict` | 2 (`slow`) | Load model → test-set inference → GCS predictions |
 | `test_05_report` | 2 (`slow`) | MLflow data + predictions → plots + Word doc on GCS |
+| `test_06_register_model` | 2 (`slow`) | Register fine-tuned model to Vertex AI Model Registry via KFP component |
 
 Tests share state via a module-scoped `pipeline_artifacts` dict so each step feeds the next. All GCS objects are written under a timestamped `integration-tests/<timestamp>/` prefix and **cleaned up automatically** after the session.
 
@@ -325,6 +327,7 @@ All tests mock GCP clients and avoid loading real BERT weights. A shared `_FakeM
 | [test_model.py](tests/unit/test_model.py) | 18 | `build_model` id2label/label2id config (mocked), `build_optimizer_scheduler` AdamW type/lr/weight_decay, `build_dataloaders` batch counts, `train_epoch` and `eval_epoch` return types / loss bounds / training-mode side-effects |
 | [test_predictor.py](tests/unit/test_predictor.py) | 19 | `compute_metrics` accuracy values and report structure, `run_inference` output shapes / softmax probabilities / `has_labels=False` path, `save_predictions` Parquet column schema / row count / GCS URI format (GCS upload mocked) |
 | [test_report.py](tests/unit/test_report.py) | 12 | `plot_training_curves` (file created, raises on empty history), `plot_confusion_matrix`, `plot_per_class_metrics` — all verify the PNG is written to disk. Skipped automatically if `matplotlib`/`seaborn` are not installed. |
+| [test_register_model.py](tests/unit/test_register_model.py) | 19 | KFP component: return value, `aiplatform.init` args, artifact URI, display name, serving routes/port, all label keys, default display name, default serving container; script: `_ENV_CONFIG` completeness (incl. `trainer_image`), default GCS URI inference, explicit URI override, trainer-image default resolution, CLI arg parsing |
 
 ---
 

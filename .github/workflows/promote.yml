@@ -53,5 +53,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh workflow run run_pipeline.yml \
+            --repo ${{ github.repository }} \
             --ref main \
             --field environment=prd
