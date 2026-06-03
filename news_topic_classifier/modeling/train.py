@@ -20,37 +20,43 @@ from news_topic_classifier.modeling.bert_classifier import build_model
 logger = logging.getLogger(__name__)
 
 
+def _fetch_oidc_token(audience: str) -> str:
+    """Generate a fresh OIDC ID token for a Cloud Run audience.
+
+    Tokens expire after 1 hour — call this before each MLflow log operation
+    when training epochs are long enough to exhaust the token lifetime.
+    """
+    import urllib.request
+    import google.auth
+    import google.auth.transport.requests
+    import requests as _requests
+
+    credentials, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    credentials.refresh(google.auth.transport.requests.Request())
+
+    req = urllib.request.Request(
+        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+        headers={"Metadata-Flavor": "Google"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as r:
+        sa_email = r.read().decode().strip()
+
+    resp = _requests.post(
+        f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{sa_email}:generateIdToken",
+        headers={"Authorization": f"Bearer {credentials.token}"},
+        json={"audience": audience, "includeEmail": True},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["token"]
+
+
 def _setup_mlflow_tracking(tracking_uri: str) -> None:
     """Set MLflow tracking URI with OIDC auth for Cloud Run endpoints."""
     if ".run.app" in tracking_uri:
-        import urllib.request
-        import google.auth
-        import google.auth.transport.requests
-        import requests as _requests
-
-        credentials, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        credentials.refresh(google.auth.transport.requests.Request())
-
-        # Get attached service account email from metadata server
-        req = urllib.request.Request(
-            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
-            headers={"Metadata-Flavor": "Google"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as r:
-            sa_email = r.read().decode().strip()
-
-        # Generate OIDC ID token via IAM Credentials API
-        resp = _requests.post(
-            f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{sa_email}:generateIdToken",
-            headers={"Authorization": f"Bearer {credentials.token}"},
-            json={"audience": tracking_uri, "includeEmail": True},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        os.environ["MLFLOW_TRACKING_TOKEN"] = resp.json()["token"]
-
+        os.environ["MLFLOW_TRACKING_TOKEN"] = _fetch_oidc_token(tracking_uri)
     mlflow.set_tracking_uri(tracking_uri)
 
 
@@ -554,6 +560,11 @@ def train(
             val_loss, val_acc = eval_epoch(model, val_loader, device)
 
             elapsed = time.time() - start
+
+            # Refresh OIDC token before logging — CPU epochs take ~60 min
+            # which is exactly the OIDC token TTL, causing a 401 on log_metrics.
+            if ".run.app" in tracking_uri:
+                os.environ["MLFLOW_TRACKING_TOKEN"] = _fetch_oidc_token(tracking_uri)
 
             mlflow.log_metrics(
                 {

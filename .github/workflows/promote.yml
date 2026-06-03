@@ -48,6 +48,18 @@ jobs:
             ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/trainer:latest \
             ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/trainer:latest
 
+      - name: Promote api image
+        run: |
+          gcrane copy \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/api:latest \
+            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/api:latest
+
+      - name: Copy base model to prd artifacts bucket
+        run: |
+          gcloud storage cp -r \
+            "gs://cs-cdwp-data-dev2188-model-artifacts/models/base-models/**" \
+            gs://cs-cdwp-data-prd2188-model-artifacts/models/base-models/
+
       - name: Trigger prd training pipeline
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

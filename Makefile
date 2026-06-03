@@ -6,9 +6,9 @@
 
 .PHONY: help install install-dev install-api install-dashboard install-test install-lint \
         test test-cov integration-test integration-test-full \
-        register-model \
-        docker-build-base docker-build-trainer docker-build docker-run \
-        docker-push-base docker-push-trainer \
+        register-model batch-predict \
+        docker-build-base docker-build-trainer docker-build-api docker-build docker-run \
+        docker-push-base docker-push-trainer docker-push-api \
         docker-test-extract docker-test-preprocess docker-test-train docker-test-predict docker-test-report docker-test-all
 
 # -----------------------------------------------------------------------------
@@ -56,7 +56,13 @@ help:
 	@echo "  -----------------------------------"
 	@echo "  make docker-push-base       Push base image to dev Artifact Registry"
 	@echo "  make docker-push-trainer    Push trainer image to dev Artifact Registry"
-	@echo "  Note: promotion dev->pp->prd is handled by CI/CD (promote.yml)"
+	@echo "  make docker-push-api        Push api image to dev Artifact Registry"
+	@echo "  Note: promotion dev->prd is handled by CI/CD (promote.yml)"
+	@echo ""
+	@echo "  Inference"
+	@echo "  ---------"
+	@echo "  make batch-predict ENV=dev          Run batch inference for today's partition"
+	@echo "  make batch-predict ENV=dev DAY=5    Run for a specific day partition (0-29)"
 	@echo ""
 
 # -----------------------------------------------------------------------------
@@ -166,4 +172,23 @@ docker-push-base: docker-build-base
 docker-push-trainer: docker-build-trainer
 	docker tag news-topic-classifier/trainer:$(LOCAL_TAG) $(REGISTRY)/trainer:latest
 	docker push $(REGISTRY)/trainer:latest
+
+docker-build-api:
+	docker compose build api
+
+docker-push-api: docker-build-api
+	docker tag news-topic-classifier/api:$(LOCAL_TAG) $(REGISTRY)/api:latest
+	docker push $(REGISTRY)/api:latest
+
+# -----------------------------------------------------------------------------
+# INFERENCE
+# -----------------------------------------------------------------------------
+
+# Usage: make batch-predict ENV=dev
+#        make batch-predict ENV=dev DAY=5
+ENV ?= dev
+DAY ?=
+
+batch-predict:
+	python scripts/batch_predict.py --environment $(ENV) $(if $(DAY),--day $(DAY),)
 
