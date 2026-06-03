@@ -8,6 +8,7 @@ on:
     paths:
       - "news_topic_classifier/**"
       - "pipelines/**"
+      - "api/**"
       - "docker/**"
       - "requirements/**"
       - "conf/**"
@@ -75,3 +76,17 @@ jobs:
         run: |
           docker push ${{ env.REGISTRY }}/trainer:latest
           docker push ${{ env.REGISTRY }}/trainer:${{ github.sha }}
+
+      - name: Build api image
+        run: |
+          docker build \
+            -f api/Dockerfile \
+            --build-arg BASE_IMAGE=${{ env.REGISTRY }}/base:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/api:latest \
+            -t ${{ env.REGISTRY }}/api:${{ github.sha }} \
+            .
+
+      - name: Push api image
+        run: |
+          docker push ${{ env.REGISTRY }}/api:latest
+          docker push ${{ env.REGISTRY }}/api:${{ github.sha }}

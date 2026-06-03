@@ -72,9 +72,31 @@ services:
     tty: true
 
   # ---------------------------------------------------------------------------
+  # API — FastAPI serving container
+  # http://localhost:8080
+  # Requires MODEL_GCS_URI and GCP_PROJECT env vars.
+  # docker compose up api
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+      args:
+        BASE_IMAGE: news-topic-classifier/base:local
+    image: news-topic-classifier/api:local
+    <<: *gcp-credentials
+    ports:
+      - "8080:8080"
+    environment:
+      MODEL_GCS_URI: ${MODEL_GCS_URI:-gs://cs-cdwp-data-dev2188-model-artifacts/models/bert-bbc-finetuned/}
+      GCP_PROJECT: ${GOOGLE_CLOUD_PROJECT:-cs-cdwp-data-dev2188}
+    profiles:
+      - api
+
+  # ---------------------------------------------------------------------------
   # Dashboard — monitoring UI (Streamlit)
   # http://localhost:8501
-  # Built from dashboard/Dockerfile — populated in a future branch
+  # docker compose --profile dashboard up
   # ---------------------------------------------------------------------------
   dashboard:
     build:
@@ -83,9 +105,11 @@ services:
     <<: *gcp-credentials
     ports:
       - "8501:8501"
-    volumes:
-      - ./dashboard:/app/dashboard
+    environment:
+      API_URL: ${API_URL:-http://api:8080}
+      GCP_PROJECT: ${GOOGLE_CLOUD_PROJECT:-cs-cdwp-data-dev2188}
+      BQ_DATASET: ${BQ_DATASET:-DATA_SCNCE_DEV_DATA}
     depends_on:
-      - mlflow
+      - api
     profiles:
       - dashboard
