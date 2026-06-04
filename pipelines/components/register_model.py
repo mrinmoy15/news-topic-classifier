@@ -15,7 +15,7 @@ def register_model_component(
     gcs_model_uri: str,
     environment_name: str,
     display_name: str = "bert-bbc-news-classifier",
-    serving_container_uri: str = _TRAINER_IMAGE,
+    serving_container_uri: str = "",
 ) -> str:
     """
     KFP component — register the fine-tuned model to Vertex AI Model Registry.
@@ -37,9 +37,9 @@ def register_model_component(
         Display name in Model Registry. Each pipeline run creates a new
         version under this name; Vertex AI manages version history.
     serving_container_uri : str
-        Docker image URI for online prediction. Defaults to the trainer image
-        (environment-specific, set by TRAINER_IMAGE env var at compile time).
-        Override with a dedicated serving image once api/Dockerfile is built.
+        Docker image URI for online prediction. Defaults to the environment's
+        trainer image derived from gcp_project. Override with a dedicated
+        serving image once api/Dockerfile is built and pushed.
 
     Returns
     -------
@@ -50,6 +50,15 @@ def register_model_component(
     from datetime import datetime, timezone
 
     from google.cloud import aiplatform
+
+    # Resolve default to the environment's trainer image — derived from
+    # gcp_project so it's always correct for dev and prd without needing
+    # a module-level variable (which KFP cannot serialise into the component).
+    if not serving_container_uri:
+        serving_container_uri = (
+            f"us-central1-docker.pkg.dev/{gcp_project}"
+            f"/news-topic-classifier/trainer:latest"
+        )
 
     aiplatform.init(project=gcp_project, location=gcp_region)
 
