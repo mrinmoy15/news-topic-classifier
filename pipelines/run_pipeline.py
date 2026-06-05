@@ -106,7 +106,7 @@ def main(cfg: DictConfig) -> None:
         template_path=COMPILED_PATH,
         pipeline_root=get_vertex_pipeline_root(cfg),
         parameter_values=_build_parameter_values(cfg),
-        enable_caching=True,
+        enable_caching=cfg.get("enable_caching", True),
     )
 
     job.submit(service_account=cfg.environment.vertex_ai_sa)
