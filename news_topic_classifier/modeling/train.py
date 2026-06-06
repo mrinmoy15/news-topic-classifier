@@ -612,7 +612,11 @@ def train(
             f"gs://{cfg.environment.gcs_bucket_artifacts}/models/bert-bbc-finetuned/"
         )
         upload_model_to_gcs(str(save_dir), gcs_model_uri, cfg.environment.gcp_project)
-        mlflow.log_artifacts(str(save_dir), artifact_path="model")
+        # Only log artifacts when running on Vertex AI — the Cloud Run MLflow server
+        # has a GCS-backed artifact store. Locally the model is already on GCS and
+        # tracked via gcs_model_uri, so logging artifacts would just fill mlruns/.
+        if os.getenv("AIP_MODEL_DIR"):
+            mlflow.log_artifacts(str(save_dir), artifact_path="model")
         mlflow.log_param("gcs_model_uri", gcs_model_uri)
 
         checkpoint_path.unlink()
