@@ -35,6 +35,11 @@ _mock_st.sidebar = MagicMock()
 
 sys.modules["streamlit"] = _mock_st
 
+# plotly is a dashboard-only dependency not installed in the test environment.
+sys.modules["plotly"] = MagicMock()
+sys.modules["plotly.express"] = MagicMock()
+sys.modules["plotly.graph_objects"] = MagicMock()
+
 # Now safe to import the app module.
 import dashboard.app as app  # noqa: E402
 
