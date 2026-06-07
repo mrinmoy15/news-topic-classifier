@@ -4,11 +4,11 @@
 #
 # Lightweight Python image — no PyTorch needed (calls API via HTTP).
 #
-# Environment variables (set at deploy time)
-# ------------------------------------------
-# API_URL       http://your-api-service-url
-# GCP_PROJECT   cs-cdwp-data-dev2188
-# BQ_DATASET    DATA_SCNCE_DEV_DATA
+# Environment variables (set at deploy time — promote.yml injects prd values)
+# ---------------------------------------------------------------------------
+# API_URL       https://news-topic-classifier-api-<hash>-uc.a.run.app  (captured from API deploy)
+# GCP_PROJECT   cs-cdwp-data-prd2188
+# BQ_DATASET    DATA_SCNCE_DATA
 # =============================================================================
 
 FROM python:3.11-slim
