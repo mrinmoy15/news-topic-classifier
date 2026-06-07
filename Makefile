@@ -6,9 +6,9 @@
 
 .PHONY: help install install-dev install-api install-dashboard install-test install-lint \
         test test-cov integration-test integration-test-full \
-        register-model batch-predict \
-        docker-build-base docker-build-trainer docker-build-api docker-build docker-run \
-        docker-push-base docker-push-trainer docker-push-api \
+        register-model batch-predict run-inference-pipeline \
+        docker-build-base docker-build-trainer docker-build-api docker-build-dashboard docker-build docker-run \
+        docker-push-base docker-push-trainer docker-push-api docker-push-dashboard \
         docker-test-extract docker-test-preprocess docker-test-train docker-test-predict docker-test-report docker-test-all
 
 # -----------------------------------------------------------------------------
@@ -39,10 +39,12 @@ help:
 	@echo ""
 	@echo "  Docker (build)"
 	@echo "  --------------"
-	@echo "  make docker-build         Build base + trainer images locally"
-	@echo "  make docker-build-base    Build base image only"
-	@echo "  make docker-build-trainer Build trainer image only"
-	@echo "  make docker-run           Run trainer container interactively"
+	@echo "  make docker-build              Build base + trainer images locally"
+	@echo "  make docker-build-base         Build base image only"
+	@echo "  make docker-build-trainer      Build trainer image only"
+	@echo "  make docker-build-api          Build api image only"
+	@echo "  make docker-build-dashboard    Build dashboard image only"
+	@echo "  make docker-run                Run trainer container interactively"
 	@echo ""
 	@echo "  Docker (smoke tests)"
 	@echo "  --------------------"
@@ -54,15 +56,18 @@ help:
 	@echo ""
 	@echo "  Docker (push to Artifact Registry)"
 	@echo "  -----------------------------------"
-	@echo "  make docker-push-base       Push base image to dev Artifact Registry"
-	@echo "  make docker-push-trainer    Push trainer image to dev Artifact Registry"
-	@echo "  make docker-push-api        Push api image to dev Artifact Registry"
+	@echo "  make docker-push-base         Push base image to dev Artifact Registry"
+	@echo "  make docker-push-trainer      Push trainer image to dev Artifact Registry"
+	@echo "  make docker-push-api          Push api image to dev Artifact Registry"
+	@echo "  make docker-push-dashboard    Push dashboard image to dev Artifact Registry"
 	@echo "  Note: promotion dev->prd is handled by CI/CD (promote.yml)"
 	@echo ""
 	@echo "  Inference"
 	@echo "  ---------"
-	@echo "  make batch-predict ENV=dev          Run batch inference for today's partition"
-	@echo "  make batch-predict ENV=dev DAY=5    Run for a specific day partition (0-29)"
+	@echo "  make batch-predict ENV=dev                   Run batch inference (standalone script)"
+	@echo "  make batch-predict ENV=dev DAY=5             Run for a specific day partition (0-29)"
+	@echo "  make run-inference-pipeline ENV=prd          Submit inference pipeline to Vertex AI"
+	@echo "  make run-inference-pipeline ENV=prd DAY=5    Submit for a specific day partition"
 	@echo ""
 
 # -----------------------------------------------------------------------------
@@ -100,19 +105,18 @@ test:
 	pytest tests/unit/ -v
 
 test-cov:
-	pytest tests/unit/ --cov=news_topic_classifier --cov-report=term-missing
+	pytest tests/unit/ --cov=news_topic_classifier --cov=pipelines --cov=dashboard --cov-report=term-missing
 
 # Requires GCP credentials (ADC or WIF).
-# Set INTEGRATION_TESTS=true before calling:
-#   PowerShell : $env:INTEGRATION_TESTS="true"; make integration-test
-#   bash/Linux : INTEGRATION_TESTS=true make integration-test
 # ---------------------------------------------------------------------------
 # INTEGRATION TESTS
 # ---------------------------------------------------------------------------
 
+integration-test: export INTEGRATION_TESTS = true
 integration-test:
 	pytest tests/integration/ -m "integration and not slow" -v --no-cov
 
+integration-test-full: export INTEGRATION_TESTS = true
 integration-test-full:
 	pytest tests/integration/ -m integration -v --no-cov
 
@@ -180,6 +184,13 @@ docker-push-api: docker-build-api
 	docker tag news-topic-classifier/api:$(LOCAL_TAG) $(REGISTRY)/api:latest
 	docker push $(REGISTRY)/api:latest
 
+docker-build-dashboard:
+	docker compose build dashboard
+
+docker-push-dashboard: docker-build-dashboard
+	docker tag news-topic-classifier/dashboard:$(LOCAL_TAG) $(REGISTRY)/dashboard:latest
+	docker push $(REGISTRY)/dashboard:latest
+
 # -----------------------------------------------------------------------------
 # INFERENCE
 # -----------------------------------------------------------------------------
@@ -191,4 +202,10 @@ DAY ?=
 
 batch-predict:
 	python scripts/batch_predict.py --environment $(ENV) $(if $(DAY),--day $(DAY),)
+
+# Submit the KFP inference pipeline to Vertex AI.
+# Usage: make run-inference-pipeline ENV=prd
+#        make run-inference-pipeline ENV=prd DAY=5
+run-inference-pipeline:
+	python pipelines/run_inference_pipeline.py environment=$(ENV) $(if $(DAY),day=$(DAY),)
 

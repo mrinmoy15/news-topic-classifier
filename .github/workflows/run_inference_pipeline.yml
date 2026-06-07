@@ -1,0 +1,66 @@
+name: Run Inference Pipeline
+
+# Daily at 6 AM ET (11 AM UTC) against prd.
+# Can also be triggered manually for any environment or a specific day partition.
+on:
+  schedule:
+    - cron: "0 11 * * *"
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [dev, prd]
+        default: prd
+      day:
+        description: "Day partition to process (0-29). Leave blank for auto (today)."
+        required: false
+        default: ""
+
+jobs:
+  run-inference:
+    name: Submit inference pipeline to ${{ inputs.environment || 'prd' }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      TARGET_ENV: ${{ inputs.environment || 'prd' }}
+      DAY_PARAM:  ${{ inputs.day || '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Install dependencies
+        run: pip install -e . -r requirements/base.txt
+
+      - name: Compile & submit inference pipeline (auto day)
+        if: env.DAY_PARAM == ''
+        run: |
+          python pipelines/run_inference_pipeline.py \
+            environment=${{ env.TARGET_ENV }} \
+            enable_caching=False
+
+      - name: Compile & submit inference pipeline (explicit day)
+        if: env.DAY_PARAM != ''
+        run: |
+          python pipelines/run_inference_pipeline.py \
+            environment=${{ env.TARGET_ENV }} \
+            day=${{ env.DAY_PARAM }} \
+            enable_caching=False

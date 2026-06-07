@@ -2,7 +2,7 @@
 
 A production-ready ML system that fine-tunes BERT to classify BBC news articles into 5 categories: **business**, **entertainment**, **politics**, **sport**, and **tech**.
 
-Built on Google Cloud Platform with Vertex AI pipelines, MLflow experiment tracking, and a fully automated GitHub Actions CI/CD workflow.
+Built on Google Cloud Platform with Vertex AI pipelines, MLflow experiment tracking, a Cloud Run inference API, and a fully automated GitHub Actions CI/CD workflow.
 
 ---
 
@@ -12,33 +12,120 @@ Built on Google Cloud Platform with Vertex AI pipelines, MLflow experiment track
 BigQuery (BBC News)
        │
        ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                   Vertex AI Training Pipeline                    │
-│                                                                  │
-│  Extract ──► Preprocess ──► Train ──► Predict ──► Evaluate ──► Register │
-│   (BQ)        (Parquet)    (BERT)   (Inference) (Metrics)   (Model Registry) │
-└──────────────────────────────────────────────────────────────────┘
-       │                        │                        │
-       ▼                        ▼                        ▼
-  GCS Buckets             MLflow Tracking        Vertex AI Model Registry
-  (data + models)         (Cloud Run)            (versioned model artifacts)
-       │
-       ▼
-   FastAPI (inference) + Streamlit (dashboard)
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Vertex AI Training Pipeline                       │
+│                                                                      │
+│  Extract → Preprocess → Train → Predict → Evaluate → Register       │
+│   (BQ)     (Parquet)   (BERT)  (Test set) (Metrics) (Model Registry)│
+└──────────────────────────────────────────────────────────────────────┘
+                          │                      │
+                          ▼                      ▼
+                    GCS Buckets          Vertex AI Model Registry
+                  (data + models)        (versioned artifacts)
+                          │
+              ┌───────────┴──────────────┐
+              ▼                          ▼
+┌─────────────────────────┐  ┌──────────────────────────────────────┐
+│  Vertex AI Inference    │  │         Cloud Run                    │
+│  Pipeline (daily batch) │  │                                      │
+│                         │  │  FastAPI /predict  ◄── Dashboard     │
+│  Fetch → Infer → Write  │  │  (authenticated)       (Streamlit)   │
+│  (BQ)   (BERT) (BQ)     │  │                                      │
+└────────────┬────────────┘  └──────────────────────────────────────┘
+             │
+             ▼
+    BigQuery predictions table
+             │
+             ▼
+    Streamlit Dashboard
+    ├── Live Inference (API call)
+    ├── Daily Accuracy
+    ├── Label Distribution
+    ├── Confusion Matrix
+    ├── Per-Class Metrics (Precision / Recall / F1)
+    └── LLM Evaluation (Gemini-as-judge)
 ```
 
 ![Vertex AI Pipeline DAG](docs/images/pipeline_dag.png)
 
-**Six-step Kubeflow Pipelines v2 workflow:**
+---
+
+## Training Pipeline
+
+**Six-step Kubeflow Pipelines v2 workflow** (`pipelines/training_pipeline.py`):
 
 | Step | Component | Description |
 |------|-----------|-------------|
 | 1 | `extract.py` | Pull articles from BigQuery public dataset |
-| 2 | `preprocess.py` | Clean text, stratified 80/10/10 split |
-| 3 | `train.py` | Fine-tune `bert-base-uncased` with AdamW |
+| 2 | `preprocess.py` | Clean text, stratified 80/10/10 split → GCS Parquet |
+| 3 | `train.py` | Fine-tune `bert-base-uncased` with AdamW + MLflow tracking |
 | 4 | `predict.py` | Run inference on held-out test set |
-| 5 | `evaluate.py` | Generate classification report |
+| 5 | `evaluate.py` | Generate classification report + plots |
 | 6 | `register_model.py` | Register fine-tuned model to Vertex AI Model Registry |
+
+---
+
+## Inference Pipeline
+
+**Three-step daily batch pipeline** (`pipelines/inference_pipeline.py`):
+
+| Step | Component | Description |
+|------|-----------|-------------|
+| 1 | `fetch_inference_data.py` | Pull today's ~74-article partition from BigQuery |
+| 2 | `run_batch_inference.py` | Load BERT from GCS, run mini-batch classification |
+| 3 | `write_inference_results.py` | Stream-insert predictions into BigQuery |
+
+The full BBC News dataset (2225 rows) is divided into 30 equal day-partitions using `MOD(ROW_NUMBER() OVER (ORDER BY title), 30)`, so each daily run covers approximately 74 articles. Pass `day=N` (0–29) to reprocess a specific partition.
+
+Scheduled automatically at **6 AM ET (11 AM UTC) daily** via `.github/workflows/run_inference_pipeline.yml`.
+
+---
+
+## Live Inference API
+
+A FastAPI container (`api/`) deployed to Cloud Run exposes:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | `GET` | Returns `200 ok` when model is loaded, `503` while loading |
+| `/predict` | `POST` | Classify one or more news texts |
+
+**Request:**
+```json
+{
+  "instances": [
+    {"text": "Apple reported record quarterly earnings driven by iPhone sales..."}
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "predictions": [
+    {"label": "tech", "confidence": 0.9821, "scores": {"business": 0.009, "tech": 0.982, ...}}
+  ]
+}
+```
+
+The Cloud Run service is authenticated (`--no-allow-unauthenticated`). The Streamlit dashboard fetches an OIDC ID token automatically via `google.oauth2.id_token.fetch_id_token`, cached for 55 minutes.
+
+---
+
+## Monitoring Dashboard
+
+A Streamlit app (`dashboard/`) deployed to Cloud Run with six tabs:
+
+| Tab | Description |
+|-----|-------------|
+| **Live Inference** | Paste any text and classify it in real time via the API |
+| **Daily Accuracy** | Line chart of classification accuracy per day with running average |
+| **Label Distribution** | Stacked bar chart of predictions per category per day |
+| **Confusion Matrix** | All-time heatmap of true vs predicted labels |
+| **Per-Class Metrics** | Precision / Recall / F1 / Support per category + accuracy vs confidence drift chart |
+| **LLM Evaluation** | Sample recent predictions, classify them with Gemini 1.5 Flash, compare BERT vs Gemini accuracy and agreement rate |
+
+All BigQuery queries are cached for 5 minutes (`@st.cache_data(ttl=300)`). The OIDC token for the API is cached for 55 minutes.
 
 ---
 
@@ -48,13 +135,11 @@ BigQuery (BBC News)
 |-----------|-------|
 | Base model | `bert-base-uncased` (110M params) |
 | Max sequence length | 512 tokens |
-| Tokenization strategy | Head (340) + Tail (170) tokens |
 | Epochs | 5 (early stopping patience: 3) |
 | Batch size | 8 |
 | Learning rate | 2e-5 (linear warmup + decay) |
 | Warmup steps | 100 |
 | Optimizer | AdamW (weight decay: 0.01) |
-| Dropout | 0.3 |
 
 Labels: `business`, `entertainment`, `politics`, `sport`, `tech`
 
@@ -66,20 +151,42 @@ Dataset: [`bigquery-public-data.bbc_news.fulltext`](https://console.cloud.google
 
 ```
 news-topic-classifier/
-├── api/                        # FastAPI inference service
-├── dashboard/                  # Streamlit monitoring dashboard
+├── api/                        # FastAPI inference service (Cloud Run)
+│   ├── main.py                 # /health + /predict endpoints
+│   ├── predictor.py            # Model download, loading, mini-batch inference
+│   └── Dockerfile
+├── dashboard/                  # Streamlit monitoring dashboard (Cloud Run)
+│   ├── app.py                  # 6-tab Streamlit app
+│   ├── bq_queries.py           # BigQuery SQL for all dashboard queries
+│   └── Dockerfile
 ├── pipelines/                  # Vertex AI pipeline definitions (KFP v2)
-│   └── components/             # Extract, preprocess, train, predict, evaluate
+│   ├── training_pipeline.py    # 6-step training pipeline
+│   ├── inference_pipeline.py   # 3-step daily inference pipeline
+│   ├── run_pipeline.py         # Compile + submit training pipeline
+│   ├── run_inference_pipeline.py # Compile + submit inference pipeline
+│   └── components/
+│       ├── extract.py
+│       ├── preprocess.py
+│       ├── train.py
+│       ├── predict.py
+│       ├── evaluate.py
+│       ├── register_model.py
+│       ├── fetch_inference_data.py
+│       ├── run_batch_inference.py
+│       └── write_inference_results.py
+├── scripts/
+│   ├── batch_predict.py        # Standalone daily batch inference (no Vertex AI)
+│   └── register_model.py       # Manual model registration CLI
 ├── news_topic_classifier/      # Core Python package
 │   └── modeling/               # BERT classifier, training loop, inference, reports
 ├── conf/                       # Hydra configuration
-│   ├── model/                  # Model hyperparameters
-│   ├── training/               # Training hyperparameters
-│   ├── data/                   # Data pipeline paths
-│   └── environment/            # dev / pp / prd GCP settings
+│   ├── environment/            # dev / pp / prd GCP settings
+│   ├── model/                  # BERT hyperparameters
+│   ├── training/               # Optimizer, scheduler, epochs
+│   └── data/                   # BigQuery table, GCS paths
 ├── docker/                     # Base and trainer Dockerfiles
 ├── tests/                      # Unit and integration tests
-├── .github/workflows/          # CI/CD (build, run_pipeline, promote)
+├── .github/workflows/          # CI/CD workflows
 └── requirements/               # Layered dependency files
 ```
 
@@ -91,7 +198,7 @@ news-topic-classifier/
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
 - Docker
 - GCP project with the following APIs enabled:
-  - BigQuery, Cloud Storage, Vertex AI, Artifact Registry
+  - BigQuery, Cloud Storage, Vertex AI, Artifact Registry, Cloud Run
 - [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) configured for GitHub Actions
 
 ---
@@ -107,13 +214,9 @@ make install-dev
 
 # With test extras
 make install-test
-```
 
-Or install specific groups directly:
-
-```bash
-pip install -e . -r requirements/base.txt
-pip install -r requirements/dev.txt
+# Dashboard only (Streamlit + Plotly + Gemini)
+make install-dashboard
 ```
 
 ---
@@ -134,30 +237,25 @@ conf/
 └── data/default.yaml      # BigQuery table, GCS paths
 ```
 
-Copy `.env.example` to `.env` and fill in your GCP credentials for local runs:
-
-```bash
-cp .env.example .env
-```
-
 ---
 
 ## Running Locally
 
-### Smoke-test individual pipeline components
+### Build and test Docker images
 
 ```bash
-# Build Docker images locally
+# Build base + trainer images
 make docker-build
 
-# Test each component in isolation
+# Build individual images
+make docker-build-api
+make docker-build-dashboard
+
+# Smoke-test pipeline components inside the container
 make docker-test-extract
 make docker-test-preprocess RAW_GCS_URI=gs://your-bucket/data/raw/
 make docker-test-train      GCS_SPLITS_DIR=gs://your-bucket/data/processed/
 make docker-test-predict    GCS_SPLITS_DIR=gs://your-bucket/data/processed/
-make docker-test-report     RUN_ID=<mlflow-run-id> GCS_PREDICTIONS_URI=gs://...
-
-# Or run all steps end-to-end
 make docker-test-all
 ```
 
@@ -165,10 +263,17 @@ make docker-test-all
 
 ```bash
 # MLflow UI at http://localhost:5000
-docker compose up
+docker compose up mlflow
+
+# FastAPI serving container at http://localhost:8080
+# Requires MODEL_GCS_URI and GCP_PROJECT environment variables
+MODEL_GCS_URI=gs://your-bucket/models/bert-bbc-finetuned/ \
+GCP_PROJECT=cs-cdwp-data-dev2188 \
+docker compose --profile api up api
 
 # Streamlit dashboard at http://localhost:8501
-docker compose up dashboard
+# Start the API first, then:
+docker compose --profile dashboard up dashboard
 ```
 
 ### Run Python modules directly
@@ -183,51 +288,70 @@ python -m news_topic_classifier.modeling.report  # Generate report
 
 ---
 
-## Submitting a Vertex AI Pipeline
+## Submitting Pipelines
+
+### Training pipeline
 
 ```bash
 # Default: dev environment
 python pipelines/run_pipeline.py
 
-# Target a specific environment
-python pipelines/run_pipeline.py environment=pp
+# Specific environment
 python pipelines/run_pipeline.py environment=prd
 
-# Override hyperparameters at submission time
-python pipelines/run_pipeline.py environment=dev training.epochs=10 training.lr=3e-5
+# Force fresh run (disable Vertex AI caching)
+python pipelines/run_pipeline.py environment=dev enable_caching=False
+
+# Override hyperparameters
+python pipelines/run_pipeline.py training.epochs=10 training.lr=3e-5
 ```
 
-The pipeline is compiled to `pipelines/compiled/training_pipeline.yaml` before submission.
+### Inference pipeline
+
+```bash
+# Submit for today's partition (prd)
+python pipelines/run_inference_pipeline.py environment=prd
+
+# Reprocess a specific day partition (0-29)
+python pipelines/run_inference_pipeline.py environment=prd day=5
+
+# Via Make
+make run-inference-pipeline ENV=prd
+make run-inference-pipeline ENV=prd DAY=5
+```
+
+Both pipelines compile to `pipelines/compiled/` before submission.
+
+### Standalone batch inference (no Vertex AI)
+
+For quick local runs without a Vertex AI pipeline job:
+
+```bash
+make batch-predict ENV=prd
+make batch-predict ENV=dev DAY=5
+```
 
 ---
 
-## Registering a Model to Vertex AI Model Registry
+## Registering a Model
 
-After a successful training pipeline run, push the fine-tuned model from GCS to Vertex AI Model Registry for versioning and deployment:
+After a successful training run the pipeline registers the model automatically. To register manually:
 
 ```bash
 # Register the default model path for dev
-make register-model ENV=dev
+python scripts/register_model.py --environment dev
 
 # Register a specific GCS URI
-python scripts/register_model.py --environment dev \
-    --gcs-model-uri gs://cs-cdwp-data-dev2188-model-artifacts/models/bert-bbc-finetuned/
+python scripts/register_model.py --environment prd \
+    --gcs-model-uri gs://cs-cdwp-data-prd2188-model-artifacts/models/bert-bbc-finetuned/
 
 # Pin a custom display name and version note
-python scripts/register_model.py --environment dev \
+python scripts/register_model.py --environment prd \
     --display-name "bert-bbc-v2" \
     --version-description "Trained 2026-06-01, val_acc=0.97"
 ```
 
 Each call creates a new **version** of the same `display-name` model resource — Vertex AI handles version history automatically.
-
-| Argument | Default | Notes |
-|----------|---------|-------|
-| `--environment` | `dev` | `dev`, `pp`, or `prd` |
-| `--gcs-model-uri` | `gs://<bucket>/models/bert-bbc-finetuned/` | Inferred from environment if omitted |
-| `--display-name` | `bert-bbc-news-classifier` | Model name in Registry |
-| `--version-description` | Timestamped string | Free-text note for this version |
-| `--serving-container-uri` | Environment's trainer image from `_ENV_CONFIG` | Override with dedicated serving image when available |
 
 ---
 
@@ -236,12 +360,22 @@ Each call creates a new **version** of the same `display-name` model resource �
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
 | `test.yml` | PR to `develop`/`main`, push to `develop` | Run unit test suite (no GCP) |
-| `build.yml` | Push to `develop` | Build and push `base` + `trainer` images to Artifact Registry |
-| `run_pipeline.yml` | After `build.yml` succeeds, or manual | Submit Vertex AI training pipeline |
-| `promote.yml` | Manual (main branch only) | Promote Docker images dev → prd, then auto-trigger prd pipeline |
+| `build.yml` | Push to `develop` (source or dashboard files) | Build and push `base`, `trainer`, `api`, `dashboard` images to dev Artifact Registry |
+| `run_pipeline.yml` | After `build.yml` succeeds, or manual | Submit Vertex AI **training** pipeline |
+| `run_inference_pipeline.yml` | Daily 6 AM ET (cron), or manual | Submit Vertex AI **inference** pipeline to prd |
+| `promote.yml` | Manual (main branch only) | Promote all images dev → prd via `gcrane copy`, deploy `api` + `dashboard` to Cloud Run (prd), then trigger prd training pipeline |
 | `integration_test.yml` | Push to `main`, or manual | Run integration tests against dev GCP environment |
 
 Authentication uses [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) — no long-lived service account keys are stored in GitHub secrets.
+
+### Promotion flow
+
+When `promote.yml` runs on `main`:
+1. `gcrane copy` promotes `base`, `trainer`, `api`, `dashboard` images dev → prd (exact digest, no rebuild)
+2. Copies base model weights from dev GCS to prd GCS
+3. Deploys `api` image to Cloud Run (prd) and captures the service URL
+4. Deploys `dashboard` image to Cloud Run (prd), injecting `GCP_PROJECT=cs-cdwp-data-prd2188`, `BQ_DATASET=DATA_SCNCE_DATA`, and the live `API_URL`
+5. Triggers the prd training pipeline via `workflow_dispatch`
 
 ---
 
@@ -255,16 +389,15 @@ Experiments are tracked on MLflow servers hosted on Cloud Run:
 | pre-prod | https://mlflow-tracking-server-nityigrfzq-uc.a.run.app |
 | prod | https://mlflow-tracking-server-wngg5g6m6q-uc.a.run.app |
 
-Each training run logs: hyperparameters, per-epoch train/val accuracy, best model checkpoint, and a final classification report.
+Each training run logs: hyperparameters, per-epoch train/val accuracy, best model checkpoint path (GCS URI), and a final classification report.
+
+> **Note:** OIDC tokens for the Cloud Run MLflow server expire after 1 hour. The training loop refreshes the token before each epoch's `log_metrics` call to handle long CPU training runs.
 
 ---
 
 ## Testing
 
 ```bash
-# Install test dependencies
-make install-test
-
 # Run all unit tests
 make test
 
@@ -275,7 +408,20 @@ make test-cov
 pytest tests/unit/test_dataset.py -v
 ```
 
-Tests are split into `tests/unit/` (fast, no GCP) and `tests/integration/` (requires real GCP credentials).
+### Unit test coverage
+
+All tests mock GCP clients and avoid loading real BERT weights. A shared `_FakeModel` (tiny `nn.Linear`) and `_FakeTokenizer` in [tests/conftest.py](tests/conftest.py) stand in for the full model, keeping the suite fast.
+
+| File | What's covered |
+|------|----------------|
+| [test_dataset.py](tests/unit/test_dataset.py) | `_gcs_output_path` URI format, `_build_extraction_query` SQL, `BBCNewsDataset` tensor shapes / dtypes |
+| [test_features.py](tests/unit/test_features.py) | `_build_preprocessing_query` SQL (split labels, FARM_FINGERPRINT, NFKC normalisation), `_gcs_split_output_paths` |
+| [test_model.py](tests/unit/test_model.py) | `build_model` id2label/label2id config, `build_optimizer_scheduler`, `build_dataloaders`, `train_epoch` / `eval_epoch` |
+| [test_predictor.py](tests/unit/test_predictor.py) | `compute_metrics`, `run_inference` output shapes / softmax probabilities, `save_predictions` Parquet schema |
+| [test_report.py](tests/unit/test_report.py) | `plot_training_curves`, `plot_confusion_matrix`, `plot_per_class_metrics` — PNG written to disk |
+| [test_register_model.py](tests/unit/test_register_model.py) | KFP component: return value, init args, routes/port, label keys, serving container defaults; script: `_ENV_CONFIG` completeness, GCS URI inference, CLI arg parsing |
+| [test_inference_components.py](tests/unit/test_inference_components.py) | `fetch_inference_data`: day auto-compute, SQL partition, raises on empty result, GCS URI, upload called; `run_batch_inference`: row count, all output keys, day_partition stored, confidence in [0,1], scores sum to 1.0; `write_inference_results`: row count, `create_table(exists_ok=True)`, insert called with correct table ref, RuntimeError on BQ errors |
+| [test_bq_queries.py](tests/unit/test_bq_queries.py) | All 8 query functions: project/dataset interpolation; `per_class_metrics`: all 5 labels, SAFE_DIVIDE, precision/recall/f1/support; `performance_trend`: accuracy + avg_confidence; `llm_eval_sample`: LIMIT `n`, RAND(), body/label columns; `recent_predictions`: day window; `summary_stats`: accuracy, confidence, first/latest run |
 
 ### Integration tests
 
@@ -294,74 +440,54 @@ INTEGRATION_TESTS=true make integration-test
 INTEGRATION_TESTS=true make integration-test-full
 ```
 
+**`tests/integration/test_pipeline.py`** — training pipeline:
+
 | Test | Tier | What it does |
 |------|------|-------------|
-| `test_01_extract` | 1 | Pull 50 rows from BigQuery → GCS Parquet |
+| `test_01_extract` | 1 | Pull 500 rows from BigQuery → GCS Parquet |
 | `test_02_preprocess` | 1 | Clean + stratified split → 3 GCS Parquet files |
 | `test_03_train` | 2 (`slow`) | Download splits → 1-epoch BERT fine-tune → GCS model |
 | `test_04_predict` | 2 (`slow`) | Load model → test-set inference → GCS predictions |
 | `test_05_report` | 2 (`slow`) | MLflow data + predictions → plots + Word doc on GCS |
 | `test_06_register_model` | 2 (`slow`) | Register fine-tuned model to Vertex AI Model Registry via KFP component |
 
-Tests share state via a module-scoped `pipeline_artifacts` dict so each step feeds the next. All GCS objects are written under a timestamped `integration-tests/<timestamp>/` prefix and **cleaned up automatically** after the session.
+**`tests/integration/test_inference_pipeline.py`** — inference pipeline:
 
-### CI trigger
-
-Unit tests run automatically via [`.github/workflows/test.yml`](.github/workflows/test.yml):
-
-| Event | Branches |
-|-------|----------|
-| Pull request (opened / updated) | `develop`, `main` |
-| Push | `develop` (when source files or tests change) |
-
-The workflow installs `requirements/base.txt` + `requirements/test.txt`, runs the full unit suite, and uploads a `coverage.xml` artifact.
-
-### Unit test coverage
-
-All tests mock GCP clients and avoid loading real BERT weights. A shared `_FakeModel` (tiny `nn.Linear`) and `_FakeTokenizer` in [tests/conftest.py](tests/conftest.py) stand in for the full model, keeping the suite fast.
-
-| File | Tests | What's covered |
-|------|-------|----------------|
-| [test_dataset.py](tests/unit/test_dataset.py) | 17 | `_gcs_output_path` URI format, `_build_extraction_query` SQL (CASE labels, NULL filters, FARM_FINGERPRINT sampling), `BBCNewsDataset` length / tensor shapes / dtypes / `use_title` concatenation |
-| [test_features.py](tests/unit/test_features.py) | 16 | `_build_preprocessing_query` SQL (split labels, pct boundaries, FARM_FINGERPRINT, NFKC normalisation, HTML stripping), `_gcs_split_output_paths` shared timestamp and bucket |
-| [test_model.py](tests/unit/test_model.py) | 18 | `build_model` id2label/label2id config (mocked), `build_optimizer_scheduler` AdamW type/lr/weight_decay, `build_dataloaders` batch counts, `train_epoch` and `eval_epoch` return types / loss bounds / training-mode side-effects |
-| [test_predictor.py](tests/unit/test_predictor.py) | 19 | `compute_metrics` accuracy values and report structure, `run_inference` output shapes / softmax probabilities / `has_labels=False` path, `save_predictions` Parquet column schema / row count / GCS URI format (GCS upload mocked) |
-| [test_report.py](tests/unit/test_report.py) | 12 | `plot_training_curves` (file created, raises on empty history), `plot_confusion_matrix`, `plot_per_class_metrics` — all verify the PNG is written to disk. Skipped automatically if `matplotlib`/`seaborn` are not installed. |
-| [test_register_model.py](tests/unit/test_register_model.py) | 19 | KFP component: return value, `aiplatform.init` args, artifact URI, display name, serving routes/port, all label keys, default display name, default serving container; script: `_ENV_CONFIG` completeness (incl. `trainer_image`), default GCS URI inference, explicit URI override, trainer-image default resolution, CLI arg parsing |
+| Test | Tier | What it does |
+|------|------|-------------|
+| `test_07_fetch_inference_data` | 1 | Fetch day=0 partition from BigQuery → GCS Parquet; verifies URI and blob exists |
+| `test_08_run_batch_inference` | 2 (`slow`) | Load BERT from GCS, run inference on fetched Parquet; verifies predictions columns, confidence range, score totals |
+| `test_09_write_inference_results` | 2 (`slow`) | Stream-insert predictions into a dedicated BQ test table; verifies row count; auto-deletes test table on cleanup |
 
 ---
 
 ## Development
 
-Install linting tools:
-
 ```bash
 make install-lint   # installs ruff and mypy
-```
 
-Then run them directly:
-
-```bash
 ruff check .        # lint
 ruff format .       # auto-format
 mypy news_topic_classifier/
 ```
 
-Code style is enforced by [Ruff](https://github.com/astral-sh/ruff) and [mypy](https://mypy.readthedocs.io/).
-
 ---
 
 ## GCP Resource Summary
 
-| Resource | Dev | Notes |
-|----------|-----|-------|
-| Project | `cs-cdwp-data-dev2188` | Separate projects per environment |
-| Region | `us-central1` | All resources |
-| GCS data bucket | `cs-cdwp-data-dev-model-data` | Raw, interim, processed splits |
-| GCS artifacts bucket | `cs-cdwp-data-dev-model-artifacts` | Models, pipeline root |
-| Artifact Registry | `us-central1-docker.pkg.dev/{project}/news-topic-classifier` | Docker images |
-| Vertex AI SA | `vertex-ai-sa@cs-cdwp-data-dev.iam.gserviceaccount.com` | Pipeline runner |
-| Training resource | 8 vCPU / 32 GB RAM | Vertex AI training component |
+| Resource | Dev | Prd |
+|----------|-----|-----|
+| Project | `cs-cdwp-data-dev2188` | `cs-cdwp-data-prd2188` |
+| Region | `us-central1` | `us-central1` |
+| GCS data bucket | `cs-cdwp-data-dev2188-model-data` | `cs-cdwp-data-prd2188-model-data` |
+| GCS artifacts bucket | `cs-cdwp-data-dev2188-model-artifacts` | `cs-cdwp-data-prd2188-model-artifacts` |
+| Artifact Registry | `us-central1-docker.pkg.dev/{project}/news-topic-classifier` | same pattern |
+| BigQuery dataset | `DATA_SCNCE_DEV_DATA` | `DATA_SCNCE_DATA` |
+| Predictions table | `news_topic_classifier_predictions` | `news_topic_classifier_predictions` |
+| Cloud Run — API | `news-topic-classifier-api` | `news-topic-classifier-api` |
+| Cloud Run — Dashboard | `news-topic-classifier-dashboard` | `news-topic-classifier-dashboard` |
+| Vertex AI SA | `vertex-ai-sa@cs-cdwp-data-dev2188.iam.gserviceaccount.com` | same pattern for prd |
+| Training resource | 8 vCPU / 32 GB RAM | same |
 
 ---
 
