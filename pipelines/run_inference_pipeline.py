@@ -56,7 +56,7 @@ def _compile(cfg: DictConfig) -> None:
     logger.info("Inference pipeline compiled -> %s", COMPILED_PATH)
 
 
-def _build_parameter_values(cfg: DictConfig, day: int) -> dict:
+def _build_parameter_values(cfg: DictConfig) -> dict:
     gcs_model_uri = (
         f"gs://{cfg.environment.gcs_bucket_artifacts}/models/bert-bbc-finetuned/"
     )
@@ -67,7 +67,6 @@ def _build_parameter_values(cfg: DictConfig, day: int) -> dict:
         "bq_dataset":         cfg.environment.bq_dataset,
         "source_table":       cfg.data.bq_source_table,
         "predictions_table":  "news_topic_classifier_predictions",
-        "day":                day,
         "batch_size":         cfg.training.batch_size,
         "max_seq_length":     cfg.model.max_seq_length,
     }
@@ -80,10 +79,8 @@ def _build_parameter_values(cfg: DictConfig, day: int) -> dict:
 )
 def main(cfg: DictConfig) -> None:
 
-    day: int = int(cfg.get("day", -1))
-
     print("\n" + "=" * 80)
-    print(f"BBC News Inference Pipeline  |  env={cfg.environment.name}  day={day if day >= 0 else 'auto'}")
+    print(f"BBC News Inference Pipeline  |  env={cfg.environment.name}")
     print("=" * 80)
 
     _compile(cfg)
@@ -99,7 +96,7 @@ def main(cfg: DictConfig) -> None:
         display_name="bbc-news-inference-pipeline",
         template_path=COMPILED_PATH,
         pipeline_root=get_vertex_pipeline_root(cfg),
-        parameter_values=_build_parameter_values(cfg, day),
+        parameter_values=_build_parameter_values(cfg),
         enable_caching=cfg.get("enable_caching", False),
     )
 

@@ -14,32 +14,25 @@ def run_batch_inference_component(
     gcs_model_uri: str,
     gcs_input_uri: str,
     gcs_bucket_data: str,
-    day: int = -1,
     batch_size: int = 32,
     max_seq_length: int = 512,
 ) -> str:
     """
-    KFP component — run BERT inference on an input Parquet and write predictions to GCS.
-
-    Downloads the fine-tuned model from GCS, reads the input Parquet produced
-    by fetch_inference_data_component, runs classification in mini-batches,
-    and writes a predictions Parquet back to GCS.
+    KFP component — run BERT inference on the input Parquet and write
+    original rows + a predicted_label column back to GCS.
 
     Parameters
     ----------
     gcp_project : str
         GCP project ID.
     gcs_model_uri : str
-        GCS URI of the fine-tuned model directory (must contain config.json,
-        model.safetensors, tokenizer files).
+        GCS URI of the fine-tuned model directory.
     gcs_input_uri : str
         GCS URI of the input Parquet from fetch_inference_data_component.
     gcs_bucket_data : str
         GCS bucket to write the predictions Parquet.
-    day : int
-        Partition index for output path naming. -1 = auto-compute from UTC date.
     batch_size : int
-        Number of texts to tokenise and infer in a single forward pass.
+        Number of texts per forward pass.
     max_seq_length : int
         Maximum tokeniser sequence length.
 
@@ -48,10 +41,11 @@ def run_batch_inference_component(
     str
         GCS URI of the predictions Parquet — passed to write_inference_results_component.
     """
+    import io
     import os
     import tempfile
-    from datetime import datetime, timezone
 
+    import pyarrow as pa
     import pyarrow.parquet as pq
     import torch
     from google.cloud import storage
@@ -59,15 +53,11 @@ def run_batch_inference_component(
     from news_topic_classifier.modeling.predict import load_model_tokenizer
     from news_topic_classifier.modeling.train import download_base_model
 
-    if day < 0:
-        day = (datetime.now(timezone.utc).day - 1) % 30
-
     # ── Download input Parquet from GCS ───────────────────────────────────────
     gcs_path = gcs_input_uri.replace("gs://", "")
     bucket_name, blob_name = gcs_path.split("/", 1)
     gcs_client = storage.Client(project=gcp_project)
 
-    import io
     fd, tmp_path = tempfile.mkstemp(suffix=".parquet")
     os.close(fd)
     try:
@@ -93,16 +83,6 @@ def run_batch_inference_component(
     print(f"Model loaded on {device}  |  labels: {list(id2label.values())}")
 
     # ── Mini-batch inference ──────────────────────────────────────────────────
-    def _label_idx(id2label: dict, label: str) -> int:
-        for idx, name in id2label.items():
-            if name == label:
-                return int(idx)
-        return 0
-
-    now       = datetime.now(timezone.utc)
-    pred_date = now.date().isoformat()
-    run_ts    = now.isoformat()
-
     output_rows = []
     for start in range(0, len(rows), batch_size):
         chunk = rows[start : start + batch_size]
@@ -120,36 +100,17 @@ def run_batch_inference_component(
         with torch.no_grad():
             logits = model(**inputs).logits
 
-        probs    = torch.softmax(logits, dim=-1).cpu().numpy()
-        pred_ids = probs.argmax(axis=-1)
+        pred_ids = torch.softmax(logits, dim=-1).cpu().numpy().argmax(axis=-1)
 
         for i, row in enumerate(chunk):
-            label      = id2label[int(pred_ids[i])]
-            confidence = float(probs[i][int(pred_ids[i])])
-            output_rows.append({
-                "prediction_date":     pred_date,
-                "run_timestamp":       run_ts,
-                "title":               row["title"],
-                "body":                row["body"],
-                "true_label":          row["true_label"],
-                "predicted_label":     label,
-                "confidence":          confidence,
-                "score_business":      float(probs[i][_label_idx(id2label, "business")]),
-                "score_entertainment": float(probs[i][_label_idx(id2label, "entertainment")]),
-                "score_politics":      float(probs[i][_label_idx(id2label, "politics")]),
-                "score_sport":         float(probs[i][_label_idx(id2label, "sport")]),
-                "score_tech":          float(probs[i][_label_idx(id2label, "tech")]),
-                "day_partition":       day,
-            })
+            output_rows.append({**row, "predicted_label": id2label[int(pred_ids[i])]})
 
     print(f"Inference complete — {len(output_rows)} predictions")
 
     # ── Write predictions Parquet to GCS ─────────────────────────────────────
-    import pyarrow as pa
     pred_table = pa.Table.from_pylist(output_rows)
-
-    gcs_out_uri = f"gs://{gcs_bucket_data}/inference/day={day}/predictions.parquet"
-    out_path    = gcs_out_uri.replace("gs://", "")
+    gcs_out_uri = f"gs://{gcs_bucket_data}/inference/samples/predictions.parquet"
+    out_path = gcs_out_uri.replace("gs://", "")
     out_bucket, out_blob = out_path.split("/", 1)
 
     fd, tmp_path = tempfile.mkstemp(suffix=".parquet")

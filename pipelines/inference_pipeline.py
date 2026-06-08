@@ -13,31 +13,25 @@ def inference_pipeline(
     bq_dataset: str,
     source_table: str = "bigquery-public-data.bbc_news.fulltext",
     predictions_table: str = "news_topic_classifier_predictions",
-    day: int = -1,
     batch_size: int = 32,
     max_seq_length: int = 512,
 ) -> None:
     """
-    Daily BBC News batch inference pipeline.
+    BBC News batch inference pipeline.
 
     Steps
     -----
-    1. fetch_data     — BQ partition → GCS Parquet (~74 articles)
+    1. fetch_data     — random 100 articles from BQ public dataset → GCS Parquet
     2. run_inference  — GCS Parquet + BERT model → predictions GCS Parquet
     3. write_results  — predictions GCS Parquet → BigQuery table
-
-    The ``day`` parameter defaults to -1, which causes each component to
-    auto-compute (UTC_day - 1) % 30 at runtime.  Pass an explicit value
-    (0-29) to reprocess a specific partition.
+                        (original columns + predicted_label)
     """
 
-    # Step 1 — Fetch today's data from BigQuery
+    # Step 1 — Fetch random sample from BigQuery
     fetch_task = fetch_inference_data_component(
         gcp_project=gcp_project,
-        bq_dataset=bq_dataset,
         gcs_bucket_data=gcs_bucket_data,
         source_table=source_table,
-        day=day,
     )
 
     # Step 2 — Run BERT inference
@@ -46,7 +40,6 @@ def inference_pipeline(
         gcs_model_uri=gcs_model_uri,
         gcs_input_uri=fetch_task.output,
         gcs_bucket_data=gcs_bucket_data,
-        day=day,
         batch_size=batch_size,
         max_seq_length=max_seq_length,
     )
