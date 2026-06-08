@@ -36,8 +36,8 @@ class TestInferencePipeline:
     def _run(self, **overrides):
         fetch_task  = MagicMock()
         infer_task  = MagicMock()
-        fetch_task.output = "gs://data-bucket/inference/day=5/input.parquet"
-        infer_task.output = "gs://data-bucket/inference/day=5/predictions.parquet"
+        fetch_task.output = "gs://data-bucket/inference/samples/input.parquet"
+        infer_task.output = "gs://data-bucket/inference/samples/predictions.parquet"
 
         with patch("pipelines.inference_pipeline.fetch_inference_data_component") as mock_fetch, \
              patch("pipelines.inference_pipeline.run_batch_inference_component") as mock_infer, \
@@ -78,13 +78,6 @@ class TestInferencePipeline:
         _, mock_infer, mock_write, _, infer_task = self._run()
         _, write_kwargs = mock_write.call_args
         assert write_kwargs["gcs_predictions_uri"] == infer_task.output
-
-    def test_explicit_day_forwarded(self):
-        mock_fetch, mock_infer, mock_write, *_ = self._run(day=7)
-        _, fetch_kw = mock_fetch.call_args
-        _, infer_kw = mock_infer.call_args
-        assert fetch_kw["day"] == 7
-        assert infer_kw["day"] == 7
 
     def test_custom_predictions_table_forwarded(self):
         _, _, mock_write, *_ = self._run(predictions_table="custom_preds")

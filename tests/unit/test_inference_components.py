@@ -5,10 +5,7 @@ access is required.
 """
 from __future__ import annotations
 
-import tempfile
-from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -28,25 +25,16 @@ ID2LABEL = {0: "business", 1: "entertainment", 2: "politics", 3: "sport", 4: "te
 # ─── Shared helpers ───────────────────────────────────────────────────────────
 
 _SAMPLE_ROWS = [
-    {"title": f"Title {i}", "body": f"Body text for article {i}", "true_label": "tech"}
+    {"title": f"Title {i}", "body": f"Body text for article {i}", "category": "tech"}
     for i in range(6)
 ]
 
 _PRED_ROWS = [
     {
-        "prediction_date":     "2026-06-06",
-        "run_timestamp":       "2026-06-06T11:00:00+00:00",
-        "title":               f"Title {i}",
-        "body":                f"Body {i}",
-        "true_label":          "tech",
-        "predicted_label":     "tech",
-        "confidence":          0.95,
-        "score_business":      0.01,
-        "score_entertainment": 0.01,
-        "score_politics":      0.01,
-        "score_sport":         0.01,
-        "score_tech":          0.95,
-        "day_partition":       0,
+        "title":           f"Title {i}",
+        "body":            f"Body {i}",
+        "category":        "tech",
+        "predicted_label": "tech",
     }
     for i in range(6)
 ]
@@ -77,65 +65,32 @@ def _mock_gcs_client(download_rows=None):
 
 class TestFetchInferenceData:
 
-    def test_explicit_day_used_in_query(self):
+    def test_query_uses_rand_limit_100(self):
         mock_bq = _mock_bq_client()
         with patch("google.cloud.bigquery.Client", mock_bq), \
              patch("google.cloud.storage.Client", _mock_gcs_client()):
-            _fetch_fn(
-                gcp_project="proj", bq_dataset="ds",
-                gcs_bucket_data="bucket", day=7,
-            )
-        query_sql = mock_bq.return_value.query.call_args[0][0]
-        assert "day_num = 7" in query_sql.replace(" ", "").replace("\n", "").replace("=", " = ")
-
-    def test_auto_day_is_valid_partition(self):
-        """day=-1 should compute (UTC day - 1) % 30 — always in 0..29."""
-        bq_calls = []
-
-        def _capturing_bq(*args, **kwargs):
-            client = MagicMock()
-            def _query(sql, **kw):
-                bq_calls.append(sql)
-                q = MagicMock()
-                q.result.return_value = _SAMPLE_ROWS
-                return q
-            client.query.side_effect = _query
-            return client
-
-        with patch("google.cloud.bigquery.Client", _capturing_bq), \
-             patch("google.cloud.storage.Client", _mock_gcs_client()):
-            _fetch_fn(gcp_project="proj", bq_dataset="ds", gcs_bucket_data="bucket", day=-1)
-
-        sql = bq_calls[0]
-        day_val = (datetime.now(timezone.utc).day - 1) % 30
-        assert f"day_num = {day_val}" in sql
+            _fetch_fn(gcp_project="proj", gcs_bucket_data="bucket")
+        sql = mock_bq.return_value.query.call_args[0][0].upper()
+        assert "RAND()" in sql
+        assert "LIMIT 100" in sql
 
     def test_raises_on_empty_result(self):
         with patch("google.cloud.bigquery.Client", _mock_bq_client(rows=[])), \
              patch("google.cloud.storage.Client", _mock_gcs_client()):
             with pytest.raises(ValueError, match="No articles found"):
-                _fetch_fn(
-                    gcp_project="proj", bq_dataset="ds",
-                    gcs_bucket_data="bucket", day=0,
-                )
+                _fetch_fn(gcp_project="proj", gcs_bucket_data="bucket")
 
-    def test_returns_gcs_uri_with_day(self):
+    def test_returns_fixed_gcs_uri(self):
         with patch("google.cloud.bigquery.Client", _mock_bq_client()), \
              patch("google.cloud.storage.Client", _mock_gcs_client()):
-            result = _fetch_fn(
-                gcp_project="proj", bq_dataset="ds",
-                gcs_bucket_data="my-bucket", day=3,
-            )
-        assert result == "gs://my-bucket/inference/day=3/input.parquet"
+            result = _fetch_fn(gcp_project="proj", gcs_bucket_data="my-bucket")
+        assert result == "gs://my-bucket/inference/samples/input.parquet"
 
     def test_uploads_parquet_to_gcs(self):
         mock_gcs = _mock_gcs_client()
         with patch("google.cloud.bigquery.Client", _mock_bq_client()), \
              patch("google.cloud.storage.Client", mock_gcs):
-            _fetch_fn(
-                gcp_project="proj", bq_dataset="ds",
-                gcs_bucket_data="bucket", day=1,
-            )
+            _fetch_fn(gcp_project="proj", gcs_bucket_data="bucket")
         upload_call = mock_gcs.return_value.bucket.return_value.blob.return_value.upload_from_filename
         upload_call.assert_called_once()
 
@@ -155,8 +110,8 @@ class TestFetchInferenceData:
         with patch("google.cloud.bigquery.Client", _capturing_bq), \
              patch("google.cloud.storage.Client", _mock_gcs_client()):
             _fetch_fn(
-                gcp_project="proj", bq_dataset="ds", gcs_bucket_data="bucket",
-                source_table="my-proj.dataset.table", day=0,
+                gcp_project="proj", gcs_bucket_data="bucket",
+                source_table="my-proj.dataset.table",
             )
 
         assert "my-proj.dataset.table" in bq_calls[0]
@@ -165,6 +120,9 @@ class TestFetchInferenceData:
 # ═══════════════════════════════════════════════════════════════════════════════
 # run_batch_inference_component
 # ═══════════════════════════════════════════════════════════════════════════════
+
+from types import SimpleNamespace
+
 
 def _fake_tokenizer(texts, **kwargs):
     n = len(texts)
@@ -185,7 +143,7 @@ def _fake_model(n_texts):
 
 class TestRunBatchInference:
 
-    def _run(self, rows=None, day=0):
+    def _run(self, rows=None):
         rows = rows or _SAMPLE_ROWS
         mock_gcs = _mock_gcs_client(download_rows=rows)
         model = _fake_model(len(rows))
@@ -198,17 +156,16 @@ class TestRunBatchInference:
             result = _infer_fn(
                 gcp_project="proj",
                 gcs_model_uri="gs://bucket/model/",
-                gcs_input_uri="gs://bucket/inference/day=0/input.parquet",
+                gcs_input_uri="gs://bucket/inference/samples/input.parquet",
                 gcs_bucket_data="bucket",
-                day=day,
                 batch_size=4,
                 max_seq_length=16,
             )
         return result
 
     def test_returns_gcs_predictions_uri(self):
-        result = self._run(day=2)
-        assert result == "gs://bucket/inference/day=2/predictions.parquet"
+        result = self._run()
+        assert result == "gs://bucket/inference/samples/predictions.parquet"
 
     def test_output_row_count_matches_input(self):
         written_rows = []
@@ -228,14 +185,14 @@ class TestRunBatchInference:
             _infer_fn(
                 gcp_project="proj",
                 gcs_model_uri="gs://bucket/model/",
-                gcs_input_uri="gs://bucket/inference/day=0/input.parquet",
+                gcs_input_uri="gs://bucket/inference/samples/input.parquet",
                 gcs_bucket_data="bucket",
-                day=0, batch_size=4, max_seq_length=16,
+                batch_size=4, max_seq_length=16,
             )
 
         assert len(written_rows) == len(_SAMPLE_ROWS)
 
-    def test_output_rows_have_all_required_keys(self):
+    def test_output_rows_have_predicted_label(self):
         written_rows = []
         orig_gcs = _mock_gcs_client(download_rows=_SAMPLE_ROWS)
         orig_gcs.return_value.bucket.return_value.blob.return_value.upload_from_filename.side_effect = (
@@ -251,20 +208,15 @@ class TestRunBatchInference:
             _infer_fn(
                 gcp_project="proj",
                 gcs_model_uri="gs://bucket/model/",
-                gcs_input_uri="gs://bucket/inference/day=0/input.parquet",
+                gcs_input_uri="gs://bucket/inference/samples/input.parquet",
                 gcs_bucket_data="bucket",
-                day=0, batch_size=4, max_seq_length=16,
+                batch_size=4, max_seq_length=16,
             )
 
-        required = {
-            "prediction_date", "run_timestamp", "title", "body",
-            "true_label", "predicted_label", "confidence",
-            "score_business", "score_entertainment", "score_politics",
-            "score_sport", "score_tech", "day_partition",
-        }
-        assert required.issubset(set(written_rows[0].keys()))
+        assert all("predicted_label" in r for r in written_rows)
+        assert all(r["predicted_label"] in ID2LABEL.values() for r in written_rows)
 
-    def test_day_partition_stored_in_output_rows(self):
+    def test_output_rows_preserve_original_columns(self):
         written_rows = []
         orig_gcs = _mock_gcs_client(download_rows=_SAMPLE_ROWS)
         orig_gcs.return_value.bucket.return_value.blob.return_value.upload_from_filename.side_effect = (
@@ -280,12 +232,13 @@ class TestRunBatchInference:
             _infer_fn(
                 gcp_project="proj",
                 gcs_model_uri="gs://bucket/model/",
-                gcs_input_uri="gs://bucket/inference/day=0/input.parquet",
+                gcs_input_uri="gs://bucket/inference/samples/input.parquet",
                 gcs_bucket_data="bucket",
-                day=11, batch_size=4, max_seq_length=16,
+                batch_size=4, max_seq_length=16,
             )
 
-        assert all(r["day_partition"] == 11 for r in written_rows)
+        for row in written_rows:
+            assert {"title", "body", "category", "predicted_label"}.issubset(row.keys())
 
     def test_calls_download_base_model(self):
         mock_download = MagicMock(return_value="/tmp/fake-model")
@@ -298,9 +251,9 @@ class TestRunBatchInference:
             _infer_fn(
                 gcp_project="proj",
                 gcs_model_uri="gs://bucket/model/",
-                gcs_input_uri="gs://bucket/inference/day=0/input.parquet",
+                gcs_input_uri="gs://bucket/inference/samples/input.parquet",
                 gcs_bucket_data="bucket",
-                day=0, batch_size=4, max_seq_length=16,
+                batch_size=4, max_seq_length=16,
             )
 
         mock_download.assert_called_once_with(
@@ -308,57 +261,6 @@ class TestRunBatchInference:
             local_dir="/tmp/bert-bbc-finetuned",
             gcp_project="proj",
         )
-
-    def test_confidence_is_float_between_0_and_1(self):
-        written_rows = []
-        orig_gcs = _mock_gcs_client(download_rows=_SAMPLE_ROWS)
-        orig_gcs.return_value.bucket.return_value.blob.return_value.upload_from_filename.side_effect = (
-            lambda path: written_rows.extend(pq.read_table(path).to_pylist())
-        )
-        model = _fake_model(len(_SAMPLE_ROWS))
-
-        with patch("google.cloud.storage.Client", orig_gcs), \
-             patch("news_topic_classifier.modeling.train.download_base_model",
-                   return_value="/tmp/fake-model"), \
-             patch("news_topic_classifier.modeling.predict.load_model_tokenizer",
-                   return_value=(model, _fake_tokenizer)):
-            _infer_fn(
-                gcp_project="proj",
-                gcs_model_uri="gs://bucket/model/",
-                gcs_input_uri="gs://bucket/inference/day=0/input.parquet",
-                gcs_bucket_data="bucket",
-                day=0, batch_size=4, max_seq_length=16,
-            )
-
-        for row in written_rows:
-            assert 0.0 <= row["confidence"] <= 1.0
-
-    def test_score_columns_sum_to_one(self):
-        written_rows = []
-        orig_gcs = _mock_gcs_client(download_rows=_SAMPLE_ROWS[:1])
-        orig_gcs.return_value.bucket.return_value.blob.return_value.upload_from_filename.side_effect = (
-            lambda path: written_rows.extend(pq.read_table(path).to_pylist())
-        )
-        model = _fake_model(1)
-
-        with patch("google.cloud.storage.Client", orig_gcs), \
-             patch("news_topic_classifier.modeling.train.download_base_model",
-                   return_value="/tmp/fake-model"), \
-             patch("news_topic_classifier.modeling.predict.load_model_tokenizer",
-                   return_value=(model, _fake_tokenizer)):
-            _infer_fn(
-                gcp_project="proj",
-                gcs_model_uri="gs://bucket/model/",
-                gcs_input_uri="gs://bucket/inference/day=0/input.parquet",
-                gcs_bucket_data="bucket",
-                day=0, batch_size=4, max_seq_length=16,
-            )
-
-        score_cols = ["score_business", "score_entertainment", "score_politics",
-                      "score_sport", "score_tech"]
-        for row in written_rows:
-            total = sum(row[c] for c in score_cols)
-            assert abs(total - 1.0) < 1e-4
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -383,13 +285,11 @@ class TestWriteInferenceResults:
 
         with patch("google.cloud.storage.Client", mock_gcs), \
              patch("google.cloud.bigquery.Client", mock_bq), \
-             patch("google.cloud.bigquery.Table", MagicMock()), \
-             patch("google.cloud.bigquery.TimePartitioning", MagicMock()), \
-             patch("google.cloud.bigquery.TimePartitioningType", MagicMock()):
+             patch("google.cloud.bigquery.Table", MagicMock()):
             return mock_bq, _write_fn(
                 gcp_project="proj",
                 bq_dataset="ds",
-                gcs_predictions_uri="gs://bucket/inference/day=0/predictions.parquet",
+                gcs_predictions_uri="gs://bucket/inference/samples/predictions.parquet",
             )
 
     def test_returns_row_count(self):
@@ -422,13 +322,11 @@ class TestWriteInferenceResults:
 
         with patch("google.cloud.storage.Client", mock_gcs), \
              patch("google.cloud.bigquery.Client", mock_bq), \
-             patch("google.cloud.bigquery.Table", MagicMock()), \
-             patch("google.cloud.bigquery.TimePartitioning", MagicMock()), \
-             patch("google.cloud.bigquery.TimePartitioningType", MagicMock()):
+             patch("google.cloud.bigquery.Table", MagicMock()):
             _write_fn(
                 gcp_project="proj",
                 bq_dataset="ds",
-                gcs_predictions_uri="gs://bucket/inference/day=0/predictions.parquet",
+                gcs_predictions_uri="gs://bucket/inference/samples/predictions.parquet",
                 predictions_table="custom_predictions",
             )
 

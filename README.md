@@ -67,17 +67,17 @@ BigQuery (BBC News)
 
 ## Inference Pipeline
 
-**Three-step daily batch pipeline** (`pipelines/inference_pipeline.py`):
+**Three-step on-demand batch pipeline** (`pipelines/inference_pipeline.py`):
 
 | Step | Component | Description |
 |------|-----------|-------------|
-| 1 | `fetch_inference_data.py` | Pull today's ~74-article partition from BigQuery |
-| 2 | `run_batch_inference.py` | Load BERT from GCS, run mini-batch classification |
-| 3 | `write_inference_results.py` | Stream-insert predictions into BigQuery |
+| 1 | `fetch_inference_data.py` | Draw a random sample of 100 articles from BigQuery (`ORDER BY RAND() LIMIT 100`) |
+| 2 | `run_batch_inference.py` | Load BERT from GCS, run mini-batch classification, add `predicted_label` column |
+| 3 | `write_inference_results.py` | Stream-insert original columns + `predicted_label` into BigQuery |
 
-The full BBC News dataset (2225 rows) is divided into 30 equal day-partitions using `MOD(ROW_NUMBER() OVER (ORDER BY title), 30)`, so each daily run covers approximately 74 articles. Pass `day=N` (0–29) to reprocess a specific partition.
+The output table preserves all source columns (`title`, `body`, `category`) and appends a single `predicted_label` column, making it easy to compare BERT predictions against the ground-truth category.
 
-Scheduled automatically at **6 AM ET (11 AM UTC) daily** via `.github/workflows/run_inference_pipeline.yml`.
+Triggered manually via **GitHub Actions → Run Inference Pipeline → Run workflow** (choose `dev` or `prd`).
 
 ---
 
@@ -309,15 +309,12 @@ python pipelines/run_pipeline.py training.epochs=10 training.lr=3e-5
 ### Inference pipeline
 
 ```bash
-# Submit for today's partition (prd)
+# Submit to prd (random 100-article sample)
 python pipelines/run_inference_pipeline.py environment=prd
-
-# Reprocess a specific day partition (0-29)
-python pipelines/run_inference_pipeline.py environment=prd day=5
 
 # Via Make
 make run-inference-pipeline ENV=prd
-make run-inference-pipeline ENV=prd DAY=5
+make run-inference-pipeline ENV=dev
 ```
 
 Both pipelines compile to `pipelines/compiled/` before submission.
@@ -362,7 +359,7 @@ Each call creates a new **version** of the same `display-name` model resource �
 | `test.yml` | PR to `develop`/`main`, push to `develop` | Run unit test suite (no GCP) |
 | `build.yml` | Push to `develop` (source or dashboard files) | Build and push `base`, `trainer`, `api`, `dashboard` images to dev Artifact Registry |
 | `run_pipeline.yml` | After `build.yml` succeeds, or manual | Submit Vertex AI **training** pipeline |
-| `run_inference_pipeline.yml` | Daily 6 AM ET (cron), or manual | Submit Vertex AI **inference** pipeline to prd |
+| `run_inference_pipeline.yml` | Manual (`workflow_dispatch`) | Submit Vertex AI **inference** pipeline to dev or prd |
 | `promote.yml` | Manual (main branch only) | Promote all images dev → prd via `gcrane copy`, deploy `api` + `dashboard` to Cloud Run (prd), then trigger prd training pipeline |
 | `integration_test.yml` | Push to `main`, or manual | Run integration tests against dev GCP environment |
 
@@ -420,24 +417,16 @@ All tests mock GCP clients and avoid loading real BERT weights. A shared `_FakeM
 | [test_predictor.py](tests/unit/test_predictor.py) | `compute_metrics`, `run_inference` output shapes / softmax probabilities, `save_predictions` Parquet schema |
 | [test_report.py](tests/unit/test_report.py) | `plot_training_curves`, `plot_confusion_matrix`, `plot_per_class_metrics` — PNG written to disk |
 | [test_register_model.py](tests/unit/test_register_model.py) | KFP component: return value, init args, routes/port, label keys, serving container defaults; script: `_ENV_CONFIG` completeness, GCS URI inference, CLI arg parsing |
-| [test_inference_components.py](tests/unit/test_inference_components.py) | `fetch_inference_data`: day auto-compute, SQL partition, raises on empty result, GCS URI, upload called; `run_batch_inference`: row count, all output keys, day_partition stored, confidence in [0,1], scores sum to 1.0; `write_inference_results`: row count, `create_table(exists_ok=True)`, insert called with correct table ref, RuntimeError on BQ errors |
+| [test_inference_components.py](tests/unit/test_inference_components.py) | `fetch_inference_data`: RAND/LIMIT-100 query, raises on empty result, fixed GCS URI, upload called; `run_batch_inference`: row count, `predicted_label` present and valid, original columns preserved; `write_inference_results`: row count, `create_table(exists_ok=True)`, insert called with correct table ref, RuntimeError on BQ errors |
 | [test_bq_queries.py](tests/unit/test_bq_queries.py) | All 8 query functions: project/dataset interpolation; `per_class_metrics`: all 5 labels, SAFE_DIVIDE, precision/recall/f1/support; `performance_trend`: accuracy + avg_confidence; `llm_eval_sample`: LIMIT `n`, RAND(), body/label columns; `recent_predictions`: day window; `summary_stats`: accuracy, confidence, first/latest run |
 
 ### Integration tests
 
-Integration tests hit real GCP services (BigQuery, GCS, MLflow) in the dev environment. They are **skipped automatically** unless `INTEGRATION_TESTS=true` is set.
+Integration tests hit real GCP services (BigQuery, GCS, MLflow) in the dev environment. The Make targets set `INTEGRATION_TESTS=true` automatically — no manual env var required:
 
-**PowerShell (Windows):**
-```powershell
-$env:INTEGRATION_TESTS = "true"
+```bash
 make integration-test        # Tier 1 — data pipeline only (~3 min)
 make integration-test-full   # Tier 2 — full pipeline including training (~25 min)
-```
-
-**bash / Linux / macOS:**
-```bash
-INTEGRATION_TESTS=true make integration-test
-INTEGRATION_TESTS=true make integration-test-full
 ```
 
 **`tests/integration/test_pipeline.py`** — training pipeline:
@@ -455,8 +444,8 @@ INTEGRATION_TESTS=true make integration-test-full
 
 | Test | Tier | What it does |
 |------|------|-------------|
-| `test_07_fetch_inference_data` | 1 | Fetch day=0 partition from BigQuery → GCS Parquet; verifies URI and blob exists |
-| `test_08_run_batch_inference` | 2 (`slow`) | Load BERT from GCS, run inference on fetched Parquet; verifies predictions columns, confidence range, score totals |
+| `test_07_fetch_inference_data` | 1 | Fetch random-100 sample from BigQuery → GCS Parquet at `inference/samples/input.parquet`; verifies URI and blob exists |
+| `test_08_run_batch_inference` | 2 (`slow`) | Load BERT from GCS, run inference on fetched Parquet; verifies `predicted_label` column and original columns are present |
 | `test_09_write_inference_results` | 2 (`slow`) | Stream-insert predictions into a dedicated BQ test table; verifies row count; auto-deletes test table on cleanup |
 
 ---

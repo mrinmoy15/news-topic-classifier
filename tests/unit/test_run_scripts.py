@@ -112,28 +112,24 @@ class TestRunInferencePipeline:
 
     def test_build_parameter_values_gcp_project(self):
         from pipelines.run_inference_pipeline import _build_parameter_values
-        params = _build_parameter_values(_make_cfg(), day=3)
+        params = _build_parameter_values(_make_cfg())
         assert params["gcp_project"] == "cs-cdwp-data-dev2188"
-
-    def test_build_parameter_values_includes_day(self):
-        from pipelines.run_inference_pipeline import _build_parameter_values
-        params = _build_parameter_values(_make_cfg(), day=5)
-        assert params["day"] == 5
 
     def test_build_parameter_values_gcs_model_uri_format(self):
         from pipelines.run_inference_pipeline import _build_parameter_values
-        params = _build_parameter_values(_make_cfg(), day=0)
+        params = _build_parameter_values(_make_cfg())
         assert params["gcs_model_uri"].startswith("gs://")
         assert "bert-bbc-finetuned" in params["gcs_model_uri"]
 
     def test_build_parameter_values_all_keys(self):
         from pipelines.run_inference_pipeline import _build_parameter_values
-        params = _build_parameter_values(_make_cfg(), day=-1)
+        params = _build_parameter_values(_make_cfg())
         required = {
             "gcp_project", "gcs_bucket_data", "gcs_model_uri", "bq_dataset",
-            "source_table", "predictions_table", "day", "batch_size", "max_seq_length",
+            "source_table", "predictions_table", "batch_size", "max_seq_length",
         }
         assert required.issubset(params.keys())
+        assert "day" not in params
 
     def test_compile_calls_kfp_compiler(self):
         from pipelines.run_inference_pipeline import _compile

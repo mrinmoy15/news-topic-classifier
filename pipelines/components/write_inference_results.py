@@ -18,9 +18,8 @@ def write_inference_results_component(
     """
     KFP component — load a predictions Parquet from GCS and stream-insert it into BigQuery.
 
-    Creates the destination table if it does not already exist (partitioned by
-    prediction_date). Returns the number of rows written so downstream
-    components or the pipeline UI can surface it.
+    The output table preserves all original BBC News columns (title, body, category)
+    and adds a single predicted_label column.  Returns the number of rows written.
 
     Parameters
     ----------
@@ -65,26 +64,13 @@ def write_inference_results_component(
     # ── Ensure BigQuery table exists ──────────────────────────────────────────
     bq     = bigquery.Client(project=gcp_project)
     schema = [
-        bigquery.SchemaField("prediction_date",     "DATE"),
-        bigquery.SchemaField("run_timestamp",        "TIMESTAMP"),
-        bigquery.SchemaField("title",                "STRING"),
-        bigquery.SchemaField("body",                 "STRING"),
-        bigquery.SchemaField("true_label",           "STRING"),
-        bigquery.SchemaField("predicted_label",      "STRING"),
-        bigquery.SchemaField("confidence",           "FLOAT64"),
-        bigquery.SchemaField("score_business",       "FLOAT64"),
-        bigquery.SchemaField("score_entertainment",  "FLOAT64"),
-        bigquery.SchemaField("score_politics",       "FLOAT64"),
-        bigquery.SchemaField("score_sport",          "FLOAT64"),
-        bigquery.SchemaField("score_tech",           "FLOAT64"),
-        bigquery.SchemaField("day_partition",        "INT64"),
+        bigquery.SchemaField("title",           "STRING"),
+        bigquery.SchemaField("body",            "STRING"),
+        bigquery.SchemaField("category",        "STRING"),
+        bigquery.SchemaField("predicted_label", "STRING"),
     ]
     full_ref = f"{gcp_project}.{bq_dataset}.{predictions_table}"
     bq_tbl   = bigquery.Table(full_ref, schema=schema)
-    bq_tbl.time_partitioning = bigquery.TimePartitioning(
-        type_=bigquery.TimePartitioningType.DAY,
-        field="prediction_date",
-    )
     bq.create_table(bq_tbl, exists_ok=True)
     print(f"Predictions table ready: {full_ref}")
 
