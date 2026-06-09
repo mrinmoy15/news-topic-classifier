@@ -9,6 +9,7 @@ on:
       - "news_topic_classifier/**"
       - "pipelines/**"
       - "api/**"
+      - "dashboard/**"
       - "docker/**"
       - "requirements/**"
       - "conf/**"
@@ -90,3 +91,16 @@ jobs:
         run: |
           docker push ${{ env.REGISTRY }}/api:latest
           docker push ${{ env.REGISTRY }}/api:${{ github.sha }}
+
+      - name: Build dashboard image
+        run: |
+          docker build \
+            -f dashboard/Dockerfile \
+            -t ${{ env.REGISTRY }}/dashboard:latest \
+            -t ${{ env.REGISTRY }}/dashboard:${{ github.sha }} \
+            .
+
+      - name: Push dashboard image
+        run: |
+          docker push ${{ env.REGISTRY }}/dashboard:latest
+          docker push ${{ env.REGISTRY }}/dashboard:${{ github.sha }}

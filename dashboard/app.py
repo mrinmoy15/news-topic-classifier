@@ -3,15 +3,17 @@ BBC News Topic Classifier — Monitoring Dashboard
 
 Tabs
 ----
-1. Live Inference    — paste text, get real-time prediction from the API
-2. Daily Accuracy    — line chart of daily accuracy over time
-3. Label Distribution — stacked bar chart of predictions per day
-4. Confusion Matrix  — heatmap of true vs predicted labels
+1. Live Inference      — paste text, get real-time prediction from the API
+2. Daily Accuracy      — line chart of daily accuracy over time
+3. Label Distribution  — stacked bar chart of predictions per day
+4. Confusion Matrix    — heatmap of true vs predicted labels
+5. Per-Class Metrics   — precision / recall / F1 / support per category
+6. LLM Evaluation      — Gemini-as-judge on a random sample; compare with BERT
 
 Environment variables
 ---------------------
 API_URL       Base URL of the FastAPI serving container (default: localhost:8080)
-GCP_PROJECT   GCP project ID for BigQuery
+GCP_PROJECT   GCP project ID for BigQuery and Vertex AI
 BQ_DATASET    BigQuery dataset containing the predictions table
 """
 from __future__ import annotations
@@ -29,6 +31,9 @@ from dashboard.bq_queries import (
     confusion_data,
     daily_accuracy,
     label_distribution,
+    llm_eval_sample,
+    per_class_metrics,
+    performance_trend,
     summary_stats,
 )
 
@@ -70,11 +75,35 @@ def _query(sql: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=3300)
+def _api_id_token(audience: str) -> str:
+    """Fetch an OIDC ID token for the Cloud Run API audience.
+
+    Cached for 55 minutes — tokens expire after 60 minutes so this ensures
+    a fresh token is always available without hitting the token endpoint on
+    every request.  Works on Cloud Run (metadata server) and locally via
+    gcloud ADC or a service account key.
+    """
+    import google.auth.transport.requests
+    import google.oauth2.id_token
+
+    auth_req = google.auth.transport.requests.Request()
+    return google.oauth2.id_token.fetch_id_token(auth_req, audience)
+
+
+def _auth_headers() -> dict:
+    """Return Authorization header when calling an authenticated Cloud Run endpoint."""
+    if ".run.app" in API_URL:
+        return {"Authorization": f"Bearer {_api_id_token(API_URL)}"}
+    return {}
+
+
 def _call_api(text: str) -> dict | None:
     try:
         resp = httpx.post(
             f"{API_URL}/predict",
             json={"instances": [{"text": text}]},
+            headers=_auth_headers(),
             timeout=30.0,
         )
         resp.raise_for_status()
@@ -85,6 +114,27 @@ def _call_api(text: str) -> dict | None:
     except Exception as e:
         st.error(f"API error: {e}")
         return None
+
+
+def _gemini_classify(text: str) -> str:
+    """Classify a single article with Gemini 1.5 Flash (LLM-as-judge)."""
+    try:
+        import vertexai
+        from vertexai.generative_models import GenerativeModel
+
+        vertexai.init(project=GCP_PROJECT, location="us-central1")
+        model = GenerativeModel("gemini-1.5-flash")
+        prompt = (
+            "Classify the BBC News article below into exactly ONE category.\n"
+            "Categories: business, entertainment, politics, sport, tech\n\n"
+            f"Article:\n{text[:800]}\n\n"
+            "Reply with ONLY the category name, nothing else."
+        )
+        response = model.generate_content(prompt)
+        label = response.text.strip().lower().split()[0]
+        return label if label in set(LABELS) else "unknown"
+    except Exception as e:
+        return f"error: {e}"
 
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -112,11 +162,13 @@ with st.sidebar:
 
 # ─── Tabs ─────────────────────────────────────────────────────────────────────
 
-tab_live, tab_accuracy, tab_dist, tab_confusion = st.tabs([
+tab_live, tab_accuracy, tab_dist, tab_confusion, tab_metrics, tab_llm = st.tabs([
     "🔴 Live Inference",
     "📈 Daily Accuracy",
     "📊 Label Distribution",
     "🔀 Confusion Matrix",
+    "📐 Per-Class Metrics",
+    "🤖 LLM Evaluation",
 ])
 
 # ─── Tab 1: Live Inference ────────────────────────────────────────────────────
@@ -170,7 +222,7 @@ with tab_accuracy:
     df = _query(daily_accuracy(GCP_PROJECT, BQ_DATASET))
 
     if df.empty:
-        st.info("No batch predictions found. Run `scripts/batch_predict.py` first.")
+        st.info("No batch predictions found. Run the inference pipeline first.")
     else:
         avg_acc = df["accuracy"].mean()
 
@@ -247,3 +299,158 @@ with tab_confusion:
             height=500,
         )
         st.plotly_chart(fig, use_container_width=True)
+
+# ─── Tab 5: Per-Class Metrics ─────────────────────────────────────────────────
+
+with tab_metrics:
+    st.header("Per-Class Metrics")
+    st.caption("Precision, recall, and F1 computed from all batch predictions in BigQuery.")
+
+    df = _query(per_class_metrics(GCP_PROJECT, BQ_DATASET))
+
+    if df.empty:
+        st.info("No predictions yet.")
+    else:
+        # Summary table
+        display_df = df[["label", "support", "precision", "recall", "f1"]].copy()
+        display_df.columns = ["Category", "Support", "Precision", "Recall", "F1"]
+
+        # Append macro averages row
+        macro = pd.DataFrame([{
+            "Category": "**macro avg**",
+            "Support":   int(display_df["Support"].sum()),
+            "Precision": round(display_df["Precision"].mean(), 4),
+            "Recall":    round(display_df["Recall"].mean(), 4),
+            "F1":        round(display_df["F1"].mean(), 4),
+        }])
+        display_df = pd.concat([display_df, macro], ignore_index=True)
+
+        st.dataframe(
+            display_df.style.format({
+                "Precision": "{:.1%}",
+                "Recall":    "{:.1%}",
+                "F1":        "{:.1%}",
+            }),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Bar chart — precision / recall / F1 per class
+        chart_df = df[["label", "precision", "recall", "f1"]].melt(
+            id_vars="label",
+            value_vars=["precision", "recall", "f1"],
+            var_name="metric",
+            value_name="score",
+        )
+        fig = px.bar(
+            chart_df,
+            x="label", y="score", color="metric",
+            barmode="group",
+            title="Precision / Recall / F1 per Category",
+            labels={"label": "Category", "score": "Score", "metric": "Metric"},
+        )
+        fig.update_yaxes(range=[0, 1], tickformat=".0%")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Confidence + accuracy drift
+        trend_df = _query(performance_trend(GCP_PROJECT, BQ_DATASET))
+        if not trend_df.empty:
+            st.subheader("Model Drift — Accuracy & Confidence Over Time")
+            fig2 = go.Figure()
+            fig2.add_trace(go.Scatter(
+                x=trend_df["prediction_date"], y=trend_df["accuracy"],
+                mode="lines+markers", name="Accuracy",
+                line=dict(color="#636EFA"),
+            ))
+            fig2.add_trace(go.Scatter(
+                x=trend_df["prediction_date"], y=trend_df["avg_confidence"],
+                mode="lines+markers", name="Avg Confidence",
+                line=dict(color="#FFA15A", dash="dot"),
+            ))
+            fig2.update_yaxes(range=[0, 1], tickformat=".0%")
+            fig2.update_layout(
+                title="Daily Accuracy vs Average Confidence",
+                xaxis_title="Date",
+                yaxis_title="Score",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+# ─── Tab 6: LLM Evaluation ───────────────────────────────────────────────────
+
+with tab_llm:
+    st.header("LLM Evaluation (Gemini-as-Judge)")
+    st.caption(
+        "Samples recent predictions, asks Gemini 1.5 Flash to independently classify "
+        "each article, then compares BERT vs Gemini accuracy and agreement rate. "
+        "This acts as a lightweight automated quality check for model drift."
+    )
+
+    col_n, col_btn = st.columns([2, 1])
+    with col_n:
+        sample_n = st.slider("Sample size", min_value=5, max_value=30, value=15, step=5)
+    with col_btn:
+        st.write("")
+        run_eval = st.button("▶ Run Evaluation", type="primary")
+
+    if run_eval:
+        sample_df = _query(llm_eval_sample(GCP_PROJECT, BQ_DATASET, n=sample_n))
+
+        if sample_df.empty:
+            st.info("No predictions available to sample from.")
+        else:
+            progress = st.progress(0, text="Calling Gemini...")
+            gemini_labels = []
+
+            for i, row in sample_df.iterrows():
+                gemini_label = _gemini_classify(row["body"])
+                gemini_labels.append(gemini_label)
+                progress.progress((len(gemini_labels)) / len(sample_df), text=f"Classified {len(gemini_labels)}/{len(sample_df)} articles...")
+
+            progress.empty()
+
+            sample_df = sample_df.copy()
+            sample_df["gemini_label"] = gemini_labels
+            sample_df["bert_correct"]   = sample_df["predicted_label"] == sample_df["true_label"]
+            sample_df["gemini_correct"] = sample_df["gemini_label"]    == sample_df["true_label"]
+            sample_df["agreement"]      = sample_df["predicted_label"] == sample_df["gemini_label"]
+
+            # Summary metrics
+            bert_acc    = sample_df["bert_correct"].mean()
+            gemini_acc  = sample_df["gemini_correct"].mean()
+            agree_rate  = sample_df["agreement"].mean()
+
+            m1, m2, m3 = st.columns(3)
+            m1.metric("BERT Accuracy",      f"{bert_acc:.1%}",   help="BERT predictions vs true labels")
+            m2.metric("Gemini Accuracy",    f"{gemini_acc:.1%}", help="Gemini predictions vs true labels")
+            m3.metric("BERT-Gemini Agreement", f"{agree_rate:.1%}", help="Fraction where BERT and Gemini agree")
+
+            st.divider()
+
+            # Detailed comparison table
+            show_df = sample_df[["title", "true_label", "predicted_label", "gemini_label",
+                                  "confidence", "bert_correct", "gemini_correct"]].copy()
+            show_df.columns = ["Title", "True", "BERT", "Gemini", "Conf", "BERT ✓", "Gemini ✓"]
+            show_df["Title"] = show_df["Title"].str[:80]
+            show_df["Conf"]  = show_df["Conf"].apply(lambda x: f"{x:.1%}")
+
+            st.dataframe(
+                show_df.style.apply(
+                    lambda col: ["background-color: #d4edda" if v else "background-color: #f8d7da" for v in col]
+                    if col.name in ("BERT ✓", "Gemini ✓") else [""] * len(col),
+                    axis=0,
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # Disagreement breakdown
+            disagreements = sample_df[~sample_df["agreement"]]
+            if not disagreements.empty:
+                st.subheader(f"Disagreements ({len(disagreements)} articles)")
+                st.caption("Cases where BERT and Gemini predicted different categories.")
+                dis_df = disagreements[["title", "true_label", "predicted_label", "gemini_label", "confidence"]].copy()
+                dis_df.columns = ["Title", "True", "BERT", "Gemini", "Conf"]
+                dis_df["Title"] = dis_df["Title"].str[:80]
+                dis_df["Conf"]  = dis_df["Conf"].apply(lambda x: f"{x:.1%}")
+                st.dataframe(dis_df, use_container_width=True, hide_index=True)

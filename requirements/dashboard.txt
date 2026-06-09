@@ -26,3 +26,9 @@ db-dtypes>=1.2.0            # BigQuery → pandas type support
 # HTTP (call on-demand API)
 # -----------------------------------------------------------------------------
 httpx>=0.27.0
+
+# -----------------------------------------------------------------------------
+# VERTEX AI / GEMINI (LLM evaluation tab)
+# -----------------------------------------------------------------------------
+google-cloud-aiplatform[generativeai]>=1.50.0
+google-auth>=2.29.0
