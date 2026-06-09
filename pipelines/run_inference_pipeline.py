@@ -14,7 +14,7 @@
 #   python pipelines/run_inference_pipeline.py environment=prd day=5
 #
 # Disable caching (force re-run even if inputs are unchanged):
-#   python pipelines/run_inference_pipeline.py enable_caching=False
+#   python pipelines/run_inference_pipeline.py +enable_caching=False
 # =============================================================================
 
 import logging
