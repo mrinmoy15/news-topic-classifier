@@ -27,23 +27,11 @@ BigQuery (BBC News)
               ▼                          ▼
 ┌─────────────────────────┐  ┌──────────────────────────────────────┐
 │  Vertex AI Inference    │  │         Cloud Run                    │
-│  Pipeline (daily batch) │  │                                      │
-│                         │  │  FastAPI /predict  ◄── Dashboard     │
-│  Fetch → Infer → Write  │  │  (authenticated)       (Streamlit)   │
+│  Pipeline (on-demand)   │  │                                      │
+│                         │  │  FastAPI /predict                    │
+│  Fetch → Infer → Write  │  │  (authenticated)                     │
 │  (BQ)   (BERT) (BQ)     │  │                                      │
-└────────────┬────────────┘  └──────────────────────────────────────┘
-             │
-             ▼
-    BigQuery predictions table
-             │
-             ▼
-    Streamlit Dashboard
-    ├── Live Inference (API call)
-    ├── Daily Accuracy
-    ├── Label Distribution
-    ├── Confusion Matrix
-    ├── Per-Class Metrics (Precision / Recall / F1)
-    └── LLM Evaluation (Gemini-as-judge)
+└─────────────────────────┘  └──────────────────────────────────────┘
 ```
 
 ![Vertex AI Pipeline DAG](docs/images/pipeline_dag.png)
@@ -108,24 +96,7 @@ A FastAPI container (`api/`) deployed to Cloud Run exposes:
 }
 ```
 
-The Cloud Run service is authenticated (`--no-allow-unauthenticated`). The Streamlit dashboard fetches an OIDC ID token automatically via `google.oauth2.id_token.fetch_id_token`, cached for 55 minutes.
-
----
-
-## Monitoring Dashboard
-
-A Streamlit app (`dashboard/`) deployed to Cloud Run with six tabs:
-
-| Tab | Description |
-|-----|-------------|
-| **Live Inference** | Paste any text and classify it in real time via the API |
-| **Daily Accuracy** | Line chart of classification accuracy per day with running average |
-| **Label Distribution** | Stacked bar chart of predictions per category per day |
-| **Confusion Matrix** | All-time heatmap of true vs predicted labels |
-| **Per-Class Metrics** | Precision / Recall / F1 / Support per category + accuracy vs confidence drift chart |
-| **LLM Evaluation** | Sample recent predictions, classify them with Gemini 1.5 Flash, compare BERT vs Gemini accuracy and agreement rate |
-
-All BigQuery queries are cached for 5 minutes (`@st.cache_data(ttl=300)`). The OIDC token for the API is cached for 55 minutes.
+The Cloud Run service is authenticated (`--no-allow-unauthenticated`).
 
 ---
 
@@ -155,13 +126,9 @@ news-topic-classifier/
 │   ├── main.py                 # /health + /predict endpoints
 │   ├── predictor.py            # Model download, loading, mini-batch inference
 │   └── Dockerfile
-├── dashboard/                  # Streamlit monitoring dashboard (Cloud Run)
-│   ├── app.py                  # 6-tab Streamlit app
-│   ├── bq_queries.py           # BigQuery SQL for all dashboard queries
-│   └── Dockerfile
 ├── pipelines/                  # Vertex AI pipeline definitions (KFP v2)
 │   ├── training_pipeline.py    # 6-step training pipeline
-│   ├── inference_pipeline.py   # 3-step daily inference pipeline
+│   ├── inference_pipeline.py   # 3-step inference pipeline
 │   ├── run_pipeline.py         # Compile + submit training pipeline
 │   ├── run_inference_pipeline.py # Compile + submit inference pipeline
 │   └── components/
@@ -215,8 +182,6 @@ make install-dev
 # With test extras
 make install-test
 
-# Dashboard only (Streamlit + Plotly + Gemini)
-make install-dashboard
 ```
 
 ---
@@ -247,9 +212,8 @@ conf/
 # Build base + trainer images
 make docker-build
 
-# Build individual images
+# Build API image
 make docker-build-api
-make docker-build-dashboard
 
 # Smoke-test pipeline components inside the container
 make docker-test-extract
@@ -270,10 +234,6 @@ docker compose up mlflow
 MODEL_GCS_URI=gs://your-bucket/models/bert-bbc-finetuned/ \
 GCP_PROJECT=cs-cdwp-data-dev2188 \
 docker compose --profile api up api
-
-# Streamlit dashboard at http://localhost:8501
-# Start the API first, then:
-docker compose --profile dashboard up dashboard
 ```
 
 ### Run Python modules directly
@@ -357,10 +317,10 @@ Each call creates a new **version** of the same `display-name` model resource �
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
 | `test.yml` | PR to `develop`/`main`, push to `develop` | Run unit test suite (no GCP) |
-| `build.yml` | Push to `develop` (source or dashboard files) | Build and push `base`, `trainer`, `api`, `dashboard` images to dev Artifact Registry |
+| `build.yml` | Push to `develop` (source files) | Build and push `base`, `trainer`, `api` images to dev Artifact Registry |
 | `run_pipeline.yml` | After `build.yml` succeeds, or manual | Submit Vertex AI **training** pipeline |
 | `run_inference_pipeline.yml` | Manual (`workflow_dispatch`) | Submit Vertex AI **inference** pipeline to dev or prd |
-| `promote.yml` | Manual (main branch only) | Promote all images dev → prd via `gcrane copy`, deploy `api` + `dashboard` to Cloud Run (prd), then trigger prd training pipeline |
+| `promote.yml` | Manual (main branch only) | Promote all images dev → prd via `gcrane copy`, deploy `api` to Cloud Run (prd), then trigger prd training pipeline |
 | `integration_test.yml` | Push to `main`, or manual | Run integration tests against dev GCP environment |
 
 Authentication uses [Workload Identity Federation](https://cloud.google.com/iam/docs/workload-identity-federation) — no long-lived service account keys are stored in GitHub secrets.
@@ -368,11 +328,10 @@ Authentication uses [Workload Identity Federation](https://cloud.google.com/iam/
 ### Promotion flow
 
 When `promote.yml` runs on `main`:
-1. `gcrane copy` promotes `base`, `trainer`, `api`, `dashboard` images dev → prd (exact digest, no rebuild)
+1. `gcrane copy` promotes `base`, `trainer`, `api` images dev → prd (exact digest, no rebuild)
 2. Copies base model weights from dev GCS to prd GCS
-3. Deploys `api` image to Cloud Run (prd) and captures the service URL
-4. Deploys `dashboard` image to Cloud Run (prd), injecting `GCP_PROJECT=cs-cdwp-data-prd2188`, `BQ_DATASET=DATA_SCNCE_DATA`, and the live `API_URL`
-5. Triggers the prd training pipeline via `workflow_dispatch`
+3. Deploys `api` image to Cloud Run (prd)
+4. Triggers the prd training pipeline via `workflow_dispatch`
 
 ---
 
@@ -474,7 +433,6 @@ mypy news_topic_classifier/
 | BigQuery dataset | `DATA_SCNCE_DEV_DATA` | `DATA_SCNCE_DATA` |
 | Predictions table | `news_topic_classifier_predictions` | `news_topic_classifier_predictions` |
 | Cloud Run — API | `news-topic-classifier-api` | `news-topic-classifier-api` |
-| Cloud Run — Dashboard | `news-topic-classifier-dashboard` | `news-topic-classifier-dashboard` |
 | Vertex AI SA | `vertex-ai-sa@cs-cdwp-data-dev2188.iam.gserviceaccount.com` | same pattern for prd |
 | Training resource | 8 vCPU / 32 GB RAM | same |
 

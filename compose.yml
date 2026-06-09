@@ -4,12 +4,8 @@
 #
 # Usage
 # -----
-# Start all services:
-#   docker compose up
-#
-# Start a specific service:
+# Start MLflow UI:
 #   docker compose up mlflow
-#   docker compose up dashboard
 #
 # Run trainer interactively:
 #   docker compose run --rm trainer bash
@@ -93,23 +89,3 @@ services:
     profiles:
       - api
 
-  # ---------------------------------------------------------------------------
-  # Dashboard — monitoring UI (Streamlit)
-  # http://localhost:8501
-  # docker compose --profile dashboard up
-  # ---------------------------------------------------------------------------
-  dashboard:
-    build:
-      context: .
-      dockerfile: dashboard/Dockerfile
-    <<: *gcp-credentials
-    ports:
-      - "8501:8501"
-    environment:
-      API_URL: ${API_URL:-http://api:8080}
-      GCP_PROJECT: ${GOOGLE_CLOUD_PROJECT:-cs-cdwp-data-dev2188}
-      BQ_DATASET: ${BQ_DATASET:-DATA_SCNCE_DEV_DATA}
-    depends_on:
-      - api
-    profiles:
-      - dashboard

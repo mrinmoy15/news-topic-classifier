@@ -54,12 +54,6 @@ jobs:
             ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/api:latest \
             ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/api:latest
 
-      - name: Promote dashboard image
-        run: |
-          gcrane copy \
-            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.SOURCE_PROJECT }}/${{ env.REPO }}/dashboard:latest \
-            ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/dashboard:latest
-
       - name: Copy base model to prd artifacts bucket
         run: |
           gcloud storage cp -r \
@@ -83,21 +77,6 @@ jobs:
             --max-instances 3 \
             --format="value(status.url)")
           echo "url=$API_URL" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy dashboard to Cloud Run (prd)
-        run: |
-          gcloud run deploy news-topic-classifier-dashboard \
-            --image ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.TARGET_PROJECT }}/${{ env.REPO }}/dashboard:latest \
-            --region ${{ env.GCP_REGION }} \
-            --project ${{ env.TARGET_PROJECT }} \
-            --platform managed \
-            --allow-unauthenticated \
-            --set-env-vars "API_URL=${{ steps.deploy-api.outputs.url }},GCP_PROJECT=${{ env.TARGET_PROJECT }},BQ_DATASET=DATA_SCNCE_DATA" \
-            --memory 1Gi \
-            --cpu 1 \
-            --timeout 60 \
-            --min-instances 0 \
-            --max-instances 2
 
       - name: Trigger prd training pipeline
         env:
