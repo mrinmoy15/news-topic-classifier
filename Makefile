@@ -4,11 +4,11 @@
 # Usage: make <target>
 # =============================================================================
 
-.PHONY: help install install-dev install-api install-dashboard install-test install-lint \
+.PHONY: help install install-dev install-api install-test install-lint \
         test test-cov integration-test integration-test-full \
         register-model batch-predict run-inference-pipeline \
-        docker-build-base docker-build-trainer docker-build-api docker-build-dashboard docker-build docker-run \
-        docker-push-base docker-push-trainer docker-push-api docker-push-dashboard \
+        docker-build-base docker-build-trainer docker-build-api docker-build docker-run \
+        docker-push-base docker-push-trainer docker-push-api \
         docker-test-extract docker-test-preprocess docker-test-train docker-test-predict docker-test-report docker-test-all
 
 # -----------------------------------------------------------------------------
@@ -33,7 +33,6 @@ help:
 	@echo "  make install              Install base dependencies only"
 	@echo "  make install-dev          Install base + dev (notebooks, viz)"
 	@echo "  make install-api          Install base + api (fastapi, uvicorn)"
-	@echo "  make install-dashboard    Install base + dashboard (streamlit)"
 	@echo "  make install-test         Install base + test (pytest)"
 	@echo "  make install-lint         Install lint tools (ruff, mypy)"
 	@echo ""
@@ -43,7 +42,6 @@ help:
 	@echo "  make docker-build-base         Build base image only"
 	@echo "  make docker-build-trainer      Build trainer image only"
 	@echo "  make docker-build-api          Build api image only"
-	@echo "  make docker-build-dashboard    Build dashboard image only"
 	@echo "  make docker-run                Run trainer container interactively"
 	@echo ""
 	@echo "  Docker (smoke tests)"
@@ -59,15 +57,12 @@ help:
 	@echo "  make docker-push-base         Push base image to dev Artifact Registry"
 	@echo "  make docker-push-trainer      Push trainer image to dev Artifact Registry"
 	@echo "  make docker-push-api          Push api image to dev Artifact Registry"
-	@echo "  make docker-push-dashboard    Push dashboard image to dev Artifact Registry"
 	@echo "  Note: promotion dev->prd is handled by CI/CD (promote.yml)"
 	@echo ""
 	@echo "  Inference"
 	@echo "  ---------"
-	@echo "  make batch-predict ENV=dev                   Run batch inference (standalone script)"
-	@echo "  make batch-predict ENV=dev DAY=5             Run for a specific day partition (0-29)"
-	@echo "  make run-inference-pipeline ENV=prd          Submit inference pipeline to Vertex AI"
-	@echo "  make run-inference-pipeline ENV=prd DAY=5    Submit for a specific day partition"
+	@echo "  make batch-predict ENV=dev          Run batch inference (standalone script)"
+	@echo "  make run-inference-pipeline ENV=prd Submit inference pipeline to Vertex AI"
 	@echo ""
 
 # -----------------------------------------------------------------------------
@@ -86,10 +81,6 @@ install-api:
 	uv pip install -e .
 	uv pip install -r requirements/base.txt -r requirements/api.txt
 
-install-dashboard:
-	uv pip install -e .
-	uv pip install -r requirements/base.txt -r requirements/dashboard.txt
-
 install-test:
 	uv pip install -e .
 	uv pip install -r requirements/base.txt -r requirements/test.txt
@@ -105,7 +96,7 @@ test:
 	pytest tests/unit/ -v
 
 test-cov:
-	pytest tests/unit/ --cov=news_topic_classifier --cov=pipelines --cov=dashboard --cov-report=term-missing
+	pytest tests/unit/ --cov=news_topic_classifier --cov=pipelines --cov-report=term-missing
 
 # Requires GCP credentials (ADC or WIF).
 # ---------------------------------------------------------------------------
@@ -184,28 +175,17 @@ docker-push-api: docker-build-api
 	docker tag news-topic-classifier/api:$(LOCAL_TAG) $(REGISTRY)/api:latest
 	docker push $(REGISTRY)/api:latest
 
-docker-build-dashboard:
-	docker compose build dashboard
-
-docker-push-dashboard: docker-build-dashboard
-	docker tag news-topic-classifier/dashboard:$(LOCAL_TAG) $(REGISTRY)/dashboard:latest
-	docker push $(REGISTRY)/dashboard:latest
-
 # -----------------------------------------------------------------------------
 # INFERENCE
 # -----------------------------------------------------------------------------
 
 # Usage: make batch-predict ENV=dev
-#        make batch-predict ENV=dev DAY=5
 ENV ?= dev
 DAY ?=
 
 batch-predict:
 	python scripts/batch_predict.py --environment $(ENV) $(if $(DAY),--day $(DAY),)
 
-# Submit the KFP inference pipeline to Vertex AI.
 # Usage: make run-inference-pipeline ENV=prd
-#        make run-inference-pipeline ENV=prd DAY=5
 run-inference-pipeline:
-	python pipelines/run_inference_pipeline.py environment=$(ENV) $(if $(DAY),day=$(DAY),)
-
+	python pipelines/run_inference_pipeline.py environment=$(ENV)
