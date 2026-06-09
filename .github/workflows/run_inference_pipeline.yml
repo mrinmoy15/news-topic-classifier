@@ -44,4 +44,4 @@ jobs:
         run: |
           python pipelines/run_inference_pipeline.py \
             environment=${{ env.TARGET_ENV }} \
-            enable_caching=False
+            +enable_caching=False
